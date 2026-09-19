@@ -267,3 +267,23 @@ I test usano `httpx.MockTransport`, senza consumo di quota reale.
 Riferimenti: [tornei](https://oddspapi.io/en/docs/get-tournaments),
 [mercati](https://oddspapi.io/en/docs/get-markets),
 [snapshot per torneo](https://oddspapi.io/en/docs/get-odds-by-tournaments).
+
+
+### Diagnostica del collaudo
+
+Tra due richieste billable viene eseguita una pausa di almeno 1,5 secondi dopo
+la conclusione della precedente. Solo `/v4/odds-by-tournaments` usa timeout HTTPX
+30 secondi (connessione, lettura, scrittura e pool); gli altri timeout e il
+controllo `/account` restano invariati. Non ci sono retry automatici.
+
+Gli errori HTTP producono solo un codice sicuro e il contatore, per esempio:
+`odds_by_tournaments_http_429 billable_attempted=3`. I prefissi sono
+`tournaments`, `markets`, `odds_by_tournaments`; per timeout o rete il suffisso
+ e `_network_error`. Il conteggio include la richiesta fallita, esclude account
+ e Supabase ed e zero se il preflight blocca il test. Il limite resta 4.
+Nessun URL, query string, body, header o credenziale viene incluso nei log.
+Il codice distingue endpoint e categoria HTTP/rete senza esporre i dettagli
+potenzialmente sensibili restituiti dal provider.
+
+La suite locale simula HTTP 400/403/429/500, timeout e problemi di rete con
+`httpx.MockTransport`; la pausa e simulata e verificata, senza richieste reali.

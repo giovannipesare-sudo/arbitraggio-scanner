@@ -1,6 +1,7 @@
 """Explicit, bounded OddsPapi snapshot test. Never called by the polling worker."""
 import json
 import math
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -9,6 +10,7 @@ BOOKMAKERS = ('888sport.it', 'admiralbet.it', 'bet365.it', 'betfair-ex',
               'betflag.it', 'betsson.it', 'eurobet.it', 'lottomatica.it', 'sisal.it', 'snai.it')
 MAX_BILLABLE = 4
 PLANNED_BILLABLE = 3
+BILLABLE_PAUSE_SECONDS = 1.5
 SPORT_ID = 10  # Soccer, documented OddsPapi v4 identifier.
 
 
@@ -51,12 +53,24 @@ class Provider:
             raise TestFailure('duplicate_request_blocked')
         if self.used >= MAX_BILLABLE or self.used >= self.remaining:
             raise TestFailure('request_budget_exhausted')
+        # Wait after the previous completed attempt, not just between start times.
+        # Account and Supabase requests never pass through this billable client.
+        if self.used:
+            time.sleep(BILLABLE_PAUSE_SECONDS)
         # Count attempts before sending, including HTTP failures and timeouts.
         self.used += 1
         self.called.add(endpoint)
-        response = self.client.get('https://api.oddspapi.io/v4/' + endpoint,
-                                   params={**params, 'apiKey': self.key}, follow_redirects=False)
-        response.raise_for_status()
+        options = {'timeout': 30.0} if endpoint == 'odds-by-tournaments' else {}
+        code = endpoint.replace('-', '_')
+        try:
+            response = self.client.get('https://api.oddspapi.io/v4/' + endpoint,
+                                       params={**params, 'apiKey': self.key},
+                                       follow_redirects=False, **options)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise TestFailure(f'{code}_http_{exc.response.status_code}') from None
+        except httpx.RequestError:
+            raise TestFailure(f'{code}_network_error') from None
         return response.json()
 
 
@@ -233,6 +247,7 @@ class Store:
 
 def run_test(client, settings, account_check, logger):
     """One explicit invocation. No retry, pagination, background loop or key logging."""
+    provider = None
     try:
         if not settings.oddspapi_key:
             raise TestFailure('oddspapi_key_missing')
@@ -264,9 +279,11 @@ def run_test(client, settings, account_check, logger):
         logger.info('Collaudo completato: billable=%s eventi=%s quote=%s.', provider.used, len(rows), count)
         return 0
     except TestFailure as exc:
-        logger.error('Collaudo interrotto: %s.', exc)
+        logger.error('%s billable_attempted=%s', exc, provider.used if provider else 0)
     except httpx.HTTPError:
-        logger.error('Collaudo interrotto: errore HTTP/rete; nessun retry automatico.')
+        logger.error('storage_http_or_network_error billable_attempted=%s',
+                     provider.used if provider else 0)
     except (ValueError, TypeError, KeyError, IndexError, AttributeError, OverflowError):
-        logger.error('Collaudo interrotto: risposta o schema non valido.')
+        logger.error('invalid_response_or_schema billable_attempted=%s',
+                     provider.used if provider else 0)
     return 1
