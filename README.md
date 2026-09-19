@@ -287,3 +287,32 @@ potenzialmente sensibili restituiti dal provider.
 
 La suite locale simula HTTP 400/403/429/500, timeout e problemi di rete con
 `httpx.MockTransport`; la pausa e simulata e verificata, senza richieste reali.
+
+## Snapshot probe: una richiesta, nessuna persistenza
+
+`python worker.py --oddspapi-snapshot-probe` e un comando esplicito, mutuamente
+esclusivo con `--oddspapi-test` e `--once`. Usa la configurazione d'ambiente
+esistente del worker (inclusi i requisiti Supabase di Settings), ma non contatta
+Supabase e non avvia thread, heartbeat o polling.
+
+Prima esegue il controllo gratuito `/v4/account`: richiede subscription attiva,
+almeno 1 richiesta residua, sport 10 e bookmaker `bet365.it`. Se il controllo
+fallisce termina senza chiamate billable, con un codice sicuro e
+`billable_attempted=0`.
+
+Poi effettua un solo GET `/v4/odds-by-tournaments` con i soli parametri
+`tournamentIds=23`, **`bookmaker=bet365.it`** (singolare) e `apiKey` da ambiente.
+Non invia `bookmakers`, `language`, `verbosity` o `oddsFormat`. Timeout 30 secondi,
+nessuna pausa, redirect o retry. Non interpreta o salva il body dello snapshot.
+
+I log della probe riportano esclusivamente il codice e il numero di tentativi:
+
+- `snapshot_probe_ok billable_attempted=1` (HTTP riuscito, exit code 0);
+- `odds_by_tournaments_http_400 billable_attempted=1` (con lo status effettivo);
+- `odds_by_tournaments_network_error billable_attempted=1` (rete o timeout).
+
+Gli errori della probe terminano con exit code 1; configurazione o argomenti
+non validi con 2. Nessun URL, query, credenziale, header o body nei log.
+Non usarlo come comando di avvio Railway: ALWAYS ripeterebbe il processo.
+I test locali usano esclusivamente MockTransport; la probe reale non viene
+eseguita durante sviluppo o test.
