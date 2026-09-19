@@ -2,8 +2,9 @@
 
 Worker Python sempre attivo per Railway, attualmente in **modalita test**.
 Invia subito un heartbeat a Supabase e ripete ogni **15 secondi** usando `httpx`.
-Controlla opzionalmente lo stato account OddsPapi. Non acquisisce quote, non fa
-scraping, calcolo arbitraggio o operazioni di scommessa.
+Nell'avvio normale controlla solo lo stato account OddsPapi. Un comando esplicito
+consente un singolo snapshot di collaudo. Non fa scraping, calcolo arbitraggio
+o operazioni di scommessa.
 La modalita test invia heartbeat reali: non e un dry run.
 
 ## Contratto del backend Supabase
@@ -113,9 +114,9 @@ timeout di rete. Un arresto non aggiorna lo stato: fa fede `last_seen_at`.
 - [PostgREST: upsert](https://docs.postgrest.org/en/stable/references/api/tables_views.html#upsert)
 
 
-## OddsPapi: solo controllo account
+## OddsPapi: controllo account nell'avvio normale
 
-Con `ODDSPAPI_API_KEY` impostata, l'unica richiesta al provider e
+Nell'avvio normale, con `ODDSPAPI_API_KEY` impostata, l'unica richiesta al provider e
 `GET https://api.oddspapi.io/v4/account?apiKey=...`, all'avvio e ogni 300 secondi.
 Non vengono seguiti redirect e non sono previsti retry immediati. Non vengono
 chiamati `/odds`, `/fixtures`, `/tournaments`, `/bookmakers`, `/markets` o altri
@@ -191,3 +192,78 @@ from public.scanner_status where component_key = 'oddspapi';
 
 Riferimenti: [risposta account](https://oddspapi.io/en/docs/get-account) e
 [regole di quota](https://oddspapi.io/us/docs/requests-and-quota).
+
+## Collaudo quote one-shot (esplicito)
+
+```sh
+python worker.py --oddspapi-test
+```
+
+Richiede le variabili Supabase, `ODDSPAPI_API_KEY` e `WORKER_MODE=test`.
+Il comando termina dopo un solo snapshot. Non impostarlo come start command
+Railway: la policy ALWAYS lo rilancerebbe. Avviarlo manualmente in una sessione
+separata mentre il normale worker continua heartbeat e controllo account.
+Non combinarlo con `--once`. Nessun polling quote, notifica o scommessa.
+
+Prima controlla `/account`, subscription, calcio (sportId 10), bookmaker consentiti
+e almeno **3 richieste residue**; verifica poi in lettura mapping e tabelle
+Supabase. Quota insufficiente o mapping mancanti bloccano prima delle chiamate
+billable. Altri client possono consumare quota contemporaneamente.
+
+Il percorso completo usa **3 richieste billable**, con limite assoluto **4**:
+
+1. `/v4/tournaments?sportId=10&language=en`: seleziona Serie A nella categoria Italy;
+   assenza o ambiguita interrompono il test.
+2. `/v4/markets?language=en`: identifica i mercati calcio fulltime, non player-prop,
+   1X2 e Over/Under 2.5 e 3.5 con relativi outcome.
+3. `/v4/odds-by-tournaments`: un solo snapshot del torneo, con `verbosity=3`,
+   quote decimali e filtro esplicito bookmaker.
+
+Ogni tentativo conta prima dell'invio, anche in caso di errore. Nessun retry,
+redirect, paginazione o secondo snapshot. Non si chiamano `/odds`, `/fixtures`,
+`/bookmakers` o `/participants`. Gli slug ammessi sono solo:
+`888sport.it`, `admiralbet.it`, `bet365.it`, `betfair-ex`, `betflag.it`,
+`betsson.it`, `eurobet.it`, `lottomatica.it`, `sisal.it`, `snai.it`,
+intersecati con la subscription attiva.
+
+L'endpoint per torneo non documenta un filtro pre-match lato server: eventuali
+live nella risposta sono scartati prima del salvataggio. Si accettano solo
+status 0/1, startTime futuro e assenza di trueStartTime/trueEndTime. Si escludono
+bookmaker, mercati e outcome inattivi/sospesi, player-prop e prezzi non finiti
+o <=1. Per gli exchange si salva solo il prezzo decimale `back` fornito;
+non si deducono lay, liquidita o commissioni da exchangeMeta.
+
+### Persistenza nelle tabelle esistenti
+
+Schema verificato in lettura sul progetto ARBITRAGGIO, senza modifiche al database.
+Servono `quote_sources.code=ODDSPAPI` abilitata e mapping attivi tramite
+`bookmakers.oddspapi_slug`.
+
+- `events`: ricerca per `external_keys.oddspapi=fixtureId`, aggiornamento per ID
+  oppure inserimento. Mantiene altre external_keys. Se i nomi non sono forniti,
+  usa etichette esplicite con participantId, senza altre chiamate provider.
+- `markets`: upsert su `(event_id, normalized_key)`, chiavi `1x2`, `ou_2.5`,
+  `ou_3.5`, tipi `1x2`/`over_under`, periodo `full_time`, esiti `1`, `X`, `2`,
+  `over`, `under`.
+- `quotes_current`: upsert su
+  `(market_id, bookmaker_id, source_id, outcome_code, side)`.
+- `quote_history`: inserimento delle osservazioni del collaudo.
+
+`bookmaker_changed_at` usa bookmakerChangedAt, con changedAt come fallback.
+`received_at` e l'istante UTC di ricezione. Non esiste una colonna changed_at:
+`raw_ref` conserva un piccolo JSON costruito con identificativi e changedAt,
+senza risposta grezza, URL o segreti. Se entrambi i timestamp mancano,
+bookmaker_changed_at resta NULL.
+
+Eseguire un solo collaudo alla volta: events non ha un vincolo univoco sul suo
+identificativo JSON. Le scritture REST non sono una transazione unica: un errore
+puo lasciare salvataggi parziali. Una nuova esecuzione manuale aggiorna eventi,
+mercati e quote correnti ma aggiunge osservazioni allo storico.
+
+Exit code: 0 per completamento (anche senza quote ammissibili), 1 per fallimento,
+2 per configurazione/argomenti non validi. Log limitati a conteggi e codici sicuri.
+I test usano `httpx.MockTransport`, senza consumo di quota reale.
+
+Riferimenti: [tornei](https://oddspapi.io/en/docs/get-tournaments),
+[mercati](https://oddspapi.io/en/docs/get-markets),
+[snapshot per torneo](https://oddspapi.io/en/docs/get-odds-by-tournaments).

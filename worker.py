@@ -189,7 +189,9 @@ def run(client: httpx.Client, settings: Settings, stop: threading.Event) -> None
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--once", action="store_true", help="Invia heartbeat e stato fonte una volta, poi termina.")
+    commands = parser.add_mutually_exclusive_group()
+    commands.add_argument("--oddspapi-test", action="store_true", help="Collaudo quote esplicito: un solo snapshot, massimo 4 richieste billable.")
+    commands.add_argument("--once", action="store_true", help="Invia heartbeat e stato fonte una volta, poi termina.")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -204,6 +206,9 @@ def main() -> int:
         signal.signal(sig, lambda *_: stop.set())
     LOG.info("Worker avviato: mode=test, intervallo=%ss.", HEARTBEAT_INTERVAL_SECONDS)
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=False) as client:
+        if args.oddspapi_test:
+            from oddspapi_test import run_test
+            return run_test(client, settings, check_account, LOG)
         if args.once:
             heartbeat_ok = send_heartbeat(client, settings)
             source_ok = update_source_status(client, settings)
