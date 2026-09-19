@@ -157,12 +157,14 @@ def normalize(snapshot, tournament, catalog, allowed, captured):
                 continue
             for market_id, market in bookmaker.get('markets', {}).items():
                 spec = catalog.get(str(market_id))
-                if not spec or market.get('marketActive') is not True:
+                if not spec or market.get('marketActive') is not True or market.get('suspended') is True:
                     continue
                 for outcome_id, outcome in market.get('outcomes', {}).items():
+                    if outcome.get('suspended') is True or outcome.get('active') is False:
+                        continue
                     code = spec['outcomes'].get(str(outcome_id))
                     price_data = outcome.get('players', {}).get('0')
-                    if not code or not isinstance(price_data, dict) or price_data.get('active') is not True:
+                    if not code or not isinstance(price_data, dict) or price_data.get('active') is not True or price_data.get('suspended') is True:
                         continue
                     price = price_data.get('price')
                     if type(price) not in (int, float) or not math.isfinite(price) or price <= 1:

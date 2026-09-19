@@ -316,3 +316,54 @@ non validi con 2. Nessun URL, query, credenziale, header o body nei log.
 Non usarlo come comando di avvio Railway: ALWAYS ripeterebbe il processo.
 I test locali usano esclusivamente MockTransport; la probe reale non viene
 eseguita durante sviluppo o test.
+
+## Scansione operativa Serie A singola
+
+`python worker.py --scan-serie-a-once` e mutuamente esclusivo con tutte le altre
+modalita CLI. Rimane `WORKER_MODE=test`, ma il comando, se eseguito manualmente,
+scrive dati e candidati reali. Non avviarlo come start command Railway: ALWAYS
+lo ripeterebbe. Il worker normale mantiene solo heartbeat e controllo account.
+
+Preflight gratuito `/account`: subscription valida, sport 10 e almeno 2 richieste
+residue. Verifica mapping e schema Supabase prima del consumo billable. Poi:
+
+1. GET `/v4/markets?language=en`, catalogo 1X2 e O/U 2.5/3.5 fulltime.
+2. Pausa minima 1,5 secondi e un solo GET `/v4/odds-by-tournaments?tournamentIds=23`,
+   senza `bookmaker`, `bookmakers` o altri filtri; apiKey resta in ambiente.
+
+Massimo **2 tentativi billable**, nessun retry o polling; snapshot timeout 30s.
+I bookmaker sono filtrati localmente usando tutte le righe attive con
+`bookmakers.oddspapi_slug` valorizzato, senza lista fissa. Si accettano solo
+fixture calcio Serie A future, status 0/1 e non iniziate; dati sospesi/inattivi
+e prezzi non finiti o <=1 vengono scartati.
+
+Eventi e mercati vengono riutilizzati; le quote correnti vengono upsertate.
+`received_at` avanza per confermare l'osservazione, ma non genera da solo storico:
+`quote_history` cambia solo per prezzo, stato, bookmakerChangedAt o changedAt.
+I timestamp originali sono conservati come nel collaudo. Le quote OddsPapi
+dei tre mercati Serie A non piu presenti vengono disattivate, anche se una
+fixture sparisce o passa live. Non si disattivano altre sorgenti/competizioni.
+Snapshot malformati o richieste fallite interrompono prima della riconciliazione.
+
+Dopo il salvataggio viene chiamata `scan_surebet_candidates` con parametri
+`p_min_roi_percent=2`, `p_capital_limit_eur=600`, `p_max_age_seconds=30`.
+Si trattengono i candidati dei mercati appena acquisiti con gambe della sorgente
+OddsPapi e bookmaker target. Per fingerprint aperto si aggiornano ROI, importi,
+last_seen_at, eta quote e metadata; altrimenti si crea una nuova opportunita open.
+Le gambe vengono sostituite con i campi consentiti. In caso di sostituzione fallita
+si tenta di marcare stale l'opportunita parziale. Le opportunita Serie A open
+non ritrovate sono marcate stale solo dopo il completamento dei candidati.
+Nessuna notifica, invio di scommesse o calcolo aggiuntivo fuori dalla RPC esistente.
+
+I log contengono solo conteggi (fixture ricevute, bookmaker target trovati nelle
+quote valide, quote salvate, opportunita trovate, tentativi billable) e codici
+di errore sicuri. Lo schema e la firma RPC sono stati verificati in sola lettura;
+non sono state applicate migrazioni o eseguite scansioni reali durante lo sviluppo.
+
+Eseguire una sola scansione alla volta. Lo schema REST esistente non offre una
+transazione unica per tutto il ciclo o un vincolo univoco sul fixtureId JSON:
+errori di rete possono lasciare scritture parziali e l'aggiornamento gambe ha una
+breve fase intermedia. Non viene eseguito il rilevamento candidati dopo un errore
+di salvataggio quote. Il vincolo di freschezza 30s e applicato dalla RPC: scansioni
+lente possono quindi non produrre candidati. Exit code 0 successo, 1 errore,
+2 configurazione/argomenti non validi. Tutti i test sono locali con MockTransport.

@@ -190,6 +190,7 @@ def run(client: httpx.Client, settings: Settings, stop: threading.Event) -> None
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_mutually_exclusive_group()
+    commands.add_argument("--scan-serie-a-once", action="store_true", help="Scansione Serie A singola: due richieste billable, salvataggio e candidati surebet.")
     commands.add_argument("--oddspapi-snapshot-probe", action="store_true", help="Probe esplicita: account e una sola richiesta snapshot, senza salvataggi.")
     commands.add_argument("--oddspapi-test", action="store_true", help="Collaudo quote esplicito: un solo snapshot, massimo 4 richieste billable.")
     commands.add_argument("--once", action="store_true", help="Invia heartbeat e stato fonte una volta, poi termina.")
@@ -208,6 +209,9 @@ def main() -> int:
     if not args.oddspapi_snapshot_probe:
         LOG.info("Worker avviato: mode=test, intervallo=%ss.", HEARTBEAT_INTERVAL_SECONDS)
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=False) as client:
+        if args.scan_serie_a_once:
+            from serie_a_scan import run_scan
+            return run_scan(client, settings, check_account, LOG)
         if args.oddspapi_snapshot_probe:
             from oddspapi_probe import run_probe
             return run_probe(client, settings, check_account, LOG)
