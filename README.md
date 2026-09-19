@@ -2,7 +2,8 @@
 
 Worker Python sempre attivo per Railway, attualmente in **modalita test**.
 Invia subito un heartbeat a Supabase e ripete ogni **15 secondi** usando `httpx`.
-Non contiene fonti quote, scraping, calcolo arbitraggio o operazioni di scommessa.
+Controlla opzionalmente lo stato account OddsPapi. Non acquisisce quote, non fa
+scraping, calcolo arbitraggio o operazioni di scommessa.
 La modalita test invia heartbeat reali: non e un dry run.
 
 ## Contratto del backend Supabase
@@ -43,6 +44,7 @@ Configurare i valori nelle **Variables** del servizio Railway, mai nel repositor
 | `SUPABASE_SECRET_KEY` | Si, oppure la variabile legacy sotto | Secret key server Supabase |
 | `SUPABASE_SERVICE_ROLE_KEY` | Alternativa legacy | JWT service-role, usato solo se manca `SUPABASE_SECRET_KEY` |
 | `WORKER_MODE` | No | `test` (predefinito e unica modalita supportata) |
+| `ODDSPAPI_API_KEY` | No | Chiave OddsPapi; se assente la fonte viene salvata come `disabled` |
 | `WORKER_ID` | No | `arbitraggio-scanner`; assegnare ID distinti a worker indipendenti |
 
 Le chiavi server hanno privilegi elevati: conservarle solo nelle variabili del
@@ -63,9 +65,14 @@ python worker.py --once
 python worker.py
 ```
 
-`--once` effettua una singola scrittura reale: exit code 0 se riuscita, 1 se la
-richiesta fallisce, 2 se la configurazione non e valida. Per test senza rete usare
-`httpx.MockTransport` passando un client a `send_heartbeat`.
+`--once` invia un heartbeat e aggiorna una volta lo stato della fonte, con scritture
+reali: exit code 0 se entrambi i salvataggi riescono, 1 se uno fallisce, 2 per
+configurazione non valida. Un account offline salvato correttamente non causa
+exit code 1. I test automatici non usano rete o credenziali reali:
+
+```sh
+python -m unittest discover -s tests -v
+```
 
 ## Deploy Railway
 
@@ -104,3 +111,78 @@ timeout di rete. Un arresto non aggiorna lo stato: fa fede `last_seen_at`.
 - [Railway: restart policy](https://docs.railway.com/deployments/restart-policy)
 - [Supabase: chiavi API](https://supabase.com/docs/guides/getting-started/api-keys)
 - [PostgREST: upsert](https://docs.postgrest.org/en/stable/references/api/tables_views.html#upsert)
+
+
+## OddsPapi: solo controllo account
+
+Con `ODDSPAPI_API_KEY` impostata, l'unica richiesta al provider e
+`GET https://api.oddspapi.io/v4/account?apiKey=...`, all'avvio e ogni 300 secondi.
+Non vengono seguiti redirect e non sono previsti retry immediati. Non vengono
+chiamati `/odds`, `/fixtures`, `/tournaments`, `/bookmakers`, `/markets` o altri
+endpoint del provider. Non si apre alcuna connessione WebSocket.
+
+Il controllo usa un thread separato dall'heartbeat Supabase ogni 15 secondi.
+Senza chiave, nessuna richiesta parte verso OddsPapi; lo stato `disabled` viene
+comunque aggiornato in Supabase ogni 5 minuti. `WORKER_MODE=test` resta obbligatorio.
+
+La subscription viene scelta tra quelle con `is_active=true`, usando
+`current_subscription_id` quando presente. Assenza, ambiguita o campi non validi
+producono `offline`. Non si sommano quote o bookmaker di subscription diverse.
+
+- `online`: account valido con subscription attiva e oltre il 10% della quota residua.
+- `degraded`: quota residua minore o uguale al 10%, inclusa quota esaurita o limite zero.
+- `offline`: errore HTTP, rete, JSON/schema o nessuna subscription attiva.
+- `disabled`: chiave assente.
+
+`metadata` contiene solo `request_limit`, `request_count`, `remaining_requests`
+(calcolato come `max(0, request_limit - request_count)`), `websocket_access`,
+`sport_ids`, `bookmaker_count` e `bookmaker_slugs` (ordinati). Si accettano
+contatori interi non negativi; limiti null o altri formati non documentati
+vengono segnalati offline invece di essere interpretati come quota illimitata.
+La risposta grezza e il campo `api_key` non vengono mai persistiti. I log HTTP
+sono disattivati sotto WARNING e gli errori salvati sono codici controllati,
+mai URL, eccezioni complete o messaggi restituiti dal provider.
+
+## Tabella scanner_status
+
+Il worker effettua upsert in `public.scanner_status` con conflitto su
+`component_key`, sempre `oddspapi`, e `component_type=source`. Predisporre questa
+struttura prima del deploy. Se la tabella esiste gia, verificarne colonne, chiave
+univoca e vincoli di stato: non eseguire CREATE su una tabella esistente.
+Il repository non modifica il database automaticamente.
+
+```sql
+create table public.scanner_status (
+  component_key text primary key,
+  component_type text not null,
+  status text not null check (status in ('disabled', 'online', 'degraded', 'offline')),
+  metadata jsonb not null default '{}'::jsonb,
+  last_heartbeat_at timestamptz not null,
+  last_success_at timestamptz,
+  last_error text
+);
+alter table public.scanner_status enable row level security;
+revoke all on table public.scanner_status from anon, authenticated;
+grant select, insert, update on table public.scanner_status to service_role;
+```
+
+`last_heartbeat_at` registra ogni controllo completato (anche disabled/offline).
+`last_success_at` viene aggiornato solo per account valido con subscription
+attiva, anche degraded; su errori o disabled viene omesso dall'upsert per
+preservare l'ultimo successo nel database, anche dopo un riavvio. Su una nuova
+riga senza successi resta NULL. `last_error` e NULL su successo o disabled,
+altrimenti contiene un codice di errore senza segreti. Su offline/disabled
+`metadata` diventa `{}`, per non presentare come correnti dati precedenti.
+
+Un errore di scrittura Supabase viene registrato e ritentato al ciclo seguente;
+se il database e irraggiungibile, i timestamp salvati restano quelli precedenti.
+Per monitorare la fonte valutare anche la freschezza di `last_heartbeat_at`
+(intervallo nominale 5 minuti, distinto dall'heartbeat del worker).
+
+```sql
+select component_key, status, metadata, last_heartbeat_at, last_success_at, last_error
+from public.scanner_status where component_key = 'oddspapi';
+```
+
+Riferimenti: [risposta account](https://oddspapi.io/en/docs/get-account) e
+[regole di quota](https://oddspapi.io/us/docs/requests-and-quota).

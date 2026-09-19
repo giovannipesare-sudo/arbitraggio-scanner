@@ -1,8 +1,9 @@
-"""Worker di test: pubblica solo heartbeat, senza fonti quote."""
+"""Worker di test: heartbeat Supabase e controllo account opzionale, senza quote."""
 
 import argparse
 import logging
 import os
+import re
 import signal
 import threading
 import time
@@ -14,6 +15,11 @@ import httpx
 
 LOG = logging.getLogger("worker")
 HEARTBEAT_INTERVAL_SECONDS = 15
+ACCOUNT_INTERVAL_SECONDS = 300
+ACCOUNT_URL = "https://api.oddspapi.io/v4/account"
+# Suppress HTTP request URLs, which contain the OddsPapi credential.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 @dataclass(frozen=True)
@@ -21,6 +27,8 @@ class Settings:
     url: str
     key: str = field(repr=False)
     worker_id: str = "arbitraggio-scanner"
+
+    oddspapi_key: str = field(default="", repr=False)
 
     @classmethod
     def from_env(cls):
@@ -39,7 +47,7 @@ class Settings:
         worker_id = os.environ.get("WORKER_ID", "arbitraggio-scanner").strip()
         if not worker_id or len(worker_id) > 128:
             raise ValueError("WORKER_ID deve contenere da 1 a 128 caratteri.")
-        return cls(url, key, worker_id)
+        return cls(url, key, worker_id, os.environ.get("ODDSPAPI_API_KEY", "").strip())
 
 
 def send_heartbeat(client: httpx.Client, settings: Settings) -> bool:
@@ -72,6 +80,92 @@ def send_heartbeat(client: httpx.Client, settings: Settings) -> bool:
     return True
 
 
+def account_metadata(data: dict) -> dict:
+    """Validate and allowlist fields; never persist a raw account response."""
+    if not isinstance(data, dict) or not isinstance(data.get("subscriptions"), list):
+        raise ValueError("invalid_account_response")
+    active = [s for s in data["subscriptions"] if isinstance(s, dict) and s.get("is_active") is True]
+    if not active:
+        raise ValueError("no_active_subscription")
+    current = data.get("current_subscription_id")
+    selected = [s for s in active if s.get("subscription_id") == current] if current else active
+    if len(selected) != 1:
+        raise ValueError("ambiguous_active_subscription")
+    sub = selected[0]
+    limit, count = sub.get("request_limit"), sub.get("request_count")
+    websocket = sub.get("websocket_access")
+    sports, bookmakers = sub.get("sport_ids"), sub.get("bookmakers")
+    if any(type(n) is not int or n < 0 for n in (limit, count, websocket)):
+        raise ValueError("invalid_subscription_fields")
+    if not isinstance(sports, list) or any(type(n) is not int or n < 0 for n in sports):
+        raise ValueError("invalid_subscription_fields")
+    if not isinstance(bookmakers, dict) or any(
+        not isinstance(slug, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", slug)
+        for slug in bookmakers
+    ):
+        raise ValueError("invalid_subscription_fields")
+    slugs = sorted(bookmakers)
+    return {"request_limit": limit, "request_count": count,
+            "remaining_requests": max(0, limit - count), "websocket_access": websocket,
+            "sport_ids": sports, "bookmaker_count": len(slugs), "bookmaker_slugs": slugs}
+
+
+def check_account(client: httpx.Client, settings: Settings) -> dict:
+    """Only OddsPapi /account is allowed. Errors are fixed codes, never API text."""
+    payload = {"component_key": "oddspapi", "component_type": "source",
+               "status": "disabled", "metadata": {}, "last_error": None}
+    if settings.oddspapi_key:
+        try:
+            response = client.get(ACCOUNT_URL, params={"apiKey": settings.oddspapi_key},
+                                  follow_redirects=False)
+            response.raise_for_status()
+            metadata = account_metadata(response.json())
+            # Defense against a response echoing the credential in an allowed string field.
+            if any(settings.oddspapi_key in slug for slug in metadata["bookmaker_slugs"]):
+                raise ValueError("invalid_subscription_fields")
+            payload["metadata"] = metadata
+            payload["status"] = ("degraded" if metadata["remaining_requests"] <=
+                                 metadata["request_limit"] * 0.1 else "online")
+            payload["last_success_at"] = datetime.now(timezone.utc).isoformat()
+        except httpx.HTTPStatusError as exc:
+            payload.update(status="offline", last_error=f"account_http_{exc.response.status_code}")
+        except httpx.RequestError:
+            payload.update(status="offline", last_error="account_network_error")
+        except ValueError as exc:
+            safe_codes = {"no_active_subscription", "ambiguous_active_subscription",
+                          "invalid_subscription_fields", "invalid_account_response"}
+            code = str(exc)
+            payload.update(status="offline", last_error=code if code in safe_codes else "invalid_account_response")
+    payload["last_heartbeat_at"] = datetime.now(timezone.utc).isoformat()
+    return payload
+
+
+def update_source_status(client: httpx.Client, settings: Settings) -> bool:
+    payload = check_account(client, settings)
+    headers = {"apikey": settings.key, "Content-Profile": "public",
+               "Prefer": "resolution=merge-duplicates,return=minimal"}
+    if not settings.key.startswith("sb_secret_"):
+        headers["Authorization"] = f"Bearer {settings.key}"
+    try:
+        response = client.post(f"{settings.url}/rest/v1/scanner_status",
+                               params={"on_conflict": "component_key"},
+                               headers=headers, json=payload, follow_redirects=False)
+        response.raise_for_status()
+    except httpx.HTTPError:
+        LOG.warning("Salvataggio scanner_status fallito; nuovo tentativo al prossimo ciclo.")
+        return False
+    LOG.info("Stato OddsPapi salvato: %s.", payload["status"])
+    return True
+
+
+def run_source(client: httpx.Client, settings: Settings, stop: threading.Event) -> None:
+    while not stop.is_set():
+        started = time.monotonic()
+        update_source_status(client, settings)
+        remaining = ACCOUNT_INTERVAL_SECONDS - (time.monotonic() - started)
+        stop.wait(remaining if remaining > 0 else ACCOUNT_INTERVAL_SECONDS)
+
+
 def run(client: httpx.Client, settings: Settings, stop: threading.Event) -> None:
     while not stop.is_set():
         started = time.monotonic()
@@ -83,7 +177,7 @@ def run(client: httpx.Client, settings: Settings, stop: threading.Event) -> None
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--once", action="store_true", help="Invia un heartbeat reale e termina.")
+    parser.add_argument("--once", action="store_true", help="Invia heartbeat e stato fonte una volta, poi termina.")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -99,8 +193,17 @@ def main() -> int:
     LOG.info("Worker avviato: mode=test, intervallo=%ss.", HEARTBEAT_INTERVAL_SECONDS)
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=False) as client:
         if args.once:
-            return 0 if send_heartbeat(client, settings) else 1
-        run(client, settings, stop)
+            heartbeat_ok = send_heartbeat(client, settings)
+            source_ok = update_source_status(client, settings)
+            return 0 if heartbeat_ok and source_ok else 1
+        source_thread = threading.Thread(target=run_source, args=(client, settings, stop),
+                                         name="oddspapi-status")
+        source_thread.start()
+        try:
+            run(client, settings, stop)
+        finally:
+            stop.set()
+            source_thread.join()
     LOG.info("Worker arrestato.")
     return 0
 
