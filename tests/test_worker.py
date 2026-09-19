@@ -156,6 +156,84 @@ class AccountTests(unittest.TestCase):
             self.assertFalse(source.is_alive())
         self.assertEqual(len(heartbeats), 2)
 
+    def test_integer_counters(self):
+        for field in ('request_limit', 'request_count'):
+            for value in (0, 1, 10000):
+                with self.subTest(field=field, value=value):
+                    data = copy.deepcopy(self.account)
+                    data['subscriptions'][1][field] = value
+                    self.assertEqual(worker.account_metadata(data)[field], value)
+            for value in (-1, True, False, 1.0, 1.5, '1', None, [], {}):
+                self.assert_invalid_field(field, value)
+
+    def assert_invalid_field(self, field, value):
+        data = copy.deepcopy(self.account)
+        data['subscriptions'][1][field] = value
+        with self.subTest(field=field, value=value), self.client(data=data) as client:
+            body = worker.check_account(client, self.settings)
+            self.assertEqual(body['status'], 'offline')
+            self.assertEqual(body['last_error'], 'invalid_' + field)
+            self.assertEqual(body['metadata'], {})
+            self.assertNotIn('last_success_at', body)
+
+    def test_websocket_boolean_and_integer(self):
+        for value, expected in ((False, 0), (True, 1), (0, 0), (2, 2)):
+            data = copy.deepcopy(self.account)
+            data['subscriptions'][1]['websocket_access'] = value
+            with self.subTest(value=value), self.client(data=data) as client:
+                body = worker.check_account(client, self.settings)
+                self.assertEqual(body['status'], 'online')
+                actual = body['metadata']['websocket_access']
+                self.assertEqual(actual, expected)
+                self.assertIs(type(actual), int)
+        for value in (-1, 1.0, 1.5, 'true', None, [], {}):
+            self.assert_invalid_field('websocket_access', value)
+
+    def test_sport_ids_validation(self):
+        for value in ([], [0, 1, 10000]):
+            data = copy.deepcopy(self.account)
+            data['subscriptions'][1]['sport_ids'] = value
+            self.assertEqual(worker.account_metadata(data)['sport_ids'], value)
+        for value in (None, {}, '1', [True], [False], [-1], [1.0], ['1'], [None]):
+            self.assert_invalid_field('sport_ids', value)
+
+    def test_bookmakers_flexible_keys(self):
+        for value in ({}, {'Bet365.it': {}, 'Book Maker / EU': {}, 'Café+Sport': {}, 'x'*150: {}}):
+            data = copy.deepcopy(self.account)
+            data['subscriptions'][1]['bookmakers'] = value
+            with self.client(data=data) as client:
+                body = worker.check_account(client, self.settings)
+            self.assertEqual(body['status'], 'online')
+            self.assertEqual(body['metadata']['bookmaker_slugs'], sorted(value))
+            self.assertEqual(body['metadata']['bookmaker_count'], len(value))
+        for value in (None, [], 'bookmaker', {'': {}}):
+            self.assert_invalid_field('bookmakers', value)
+        # JSON object keys are always strings; exercise non-JSON direct input too.
+        data = copy.deepcopy(self.account)
+        data['subscriptions'][1]['bookmakers'] = {123: {}}
+        with self.assertRaisesRegex(ValueError, '^invalid_bookmakers$'):
+            worker.account_metadata(data)
+
+    def test_missing_fields_have_distinct_errors(self):
+        for field in ('request_limit', 'request_count', 'websocket_access', 'sport_ids', 'bookmakers'):
+            data = copy.deepcopy(self.account)
+            del data['subscriptions'][1][field]
+            with self.subTest(field=field), self.client(data=data) as client:
+                self.assertEqual(worker.check_account(client, self.settings)['last_error'], 'invalid_' + field)
+
+    def test_secrets_never_persisted_or_logged(self):
+        for secret in ('PRIVATE-CREDENTIAL', 'RETURNED-SECRET'):
+            data = copy.deepcopy(self.account)
+            data['subscriptions'][1]['bookmakers'] = {'prefix/' + secret + '/suffix': {}}
+            with self.client(data=data) as client, self.assertLogs(level='INFO') as logs:
+                self.assertTrue(worker.update_source_status(client, self.settings))
+            saved = self.requests[-1].content.decode()
+            self.assertEqual(json.loads(saved)['last_error'], 'invalid_bookmakers')
+            for forbidden in ('PRIVATE-CREDENTIAL', 'RETURNED-SECRET', 'NESTED-SECRET',
+                              'subscription_id', 'apiKey=', 'api_key'):
+                self.assertNotIn(forbidden, saved + str(logs.output))
+            self.assertEqual(json.loads(saved)['metadata'], {})
+
     def test_optional_env_and_test_mode(self):
         env = {'SUPABASE_URL':self.settings.url, 'SUPABASE_SECRET_KEY':self.settings.key}
         with patch.dict(os.environ, env, clear=True):

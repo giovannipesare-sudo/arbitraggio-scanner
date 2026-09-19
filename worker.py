@@ -3,7 +3,6 @@
 import argparse
 import logging
 import os
-import re
 import signal
 import threading
 import time
@@ -95,15 +94,26 @@ def account_metadata(data: dict) -> dict:
     limit, count = sub.get("request_limit"), sub.get("request_count")
     websocket = sub.get("websocket_access")
     sports, bookmakers = sub.get("sport_ids"), sub.get("bookmakers")
-    if any(type(n) is not int or n < 0 for n in (limit, count, websocket)):
-        raise ValueError("invalid_subscription_fields")
+    if type(limit) is not int or limit < 0:
+        raise ValueError("invalid_request_limit")
+    if type(count) is not int or count < 0:
+        raise ValueError("invalid_request_count")
+    if isinstance(websocket, bool):
+        websocket = int(websocket)
+    elif type(websocket) is not int or websocket < 0:
+        raise ValueError("invalid_websocket_access")
     if not isinstance(sports, list) or any(type(n) is not int or n < 0 for n in sports):
-        raise ValueError("invalid_subscription_fields")
+        raise ValueError("invalid_sport_ids")
     if not isinstance(bookmakers, dict) or any(
-        not isinstance(slug, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,127}", slug)
-        for slug in bookmakers
+        not isinstance(slug, str) or not slug for slug in bookmakers
     ):
-        raise ValueError("invalid_subscription_fields")
+        raise ValueError("invalid_bookmakers")
+    # A returned credential must not be copied even if echoed in a bookmaker key.
+    returned_key = data.get("api_key")
+    if isinstance(returned_key, str) and returned_key and any(
+        returned_key in slug for slug in bookmakers
+    ):
+        raise ValueError("invalid_bookmakers")
     slugs = sorted(bookmakers)
     return {"request_limit": limit, "request_count": count,
             "remaining_requests": max(0, limit - count), "websocket_access": websocket,
@@ -122,7 +132,7 @@ def check_account(client: httpx.Client, settings: Settings) -> dict:
             metadata = account_metadata(response.json())
             # Defense against a response echoing the credential in an allowed string field.
             if any(settings.oddspapi_key in slug for slug in metadata["bookmaker_slugs"]):
-                raise ValueError("invalid_subscription_fields")
+                raise ValueError("invalid_bookmakers")
             payload["metadata"] = metadata
             payload["status"] = ("degraded" if metadata["remaining_requests"] <=
                                  metadata["request_limit"] * 0.1 else "online")
@@ -133,7 +143,9 @@ def check_account(client: httpx.Client, settings: Settings) -> dict:
             payload.update(status="offline", last_error="account_network_error")
         except ValueError as exc:
             safe_codes = {"no_active_subscription", "ambiguous_active_subscription",
-                          "invalid_subscription_fields", "invalid_account_response"}
+                          "invalid_request_limit", "invalid_request_count",
+                          "invalid_websocket_access", "invalid_sport_ids",
+                          "invalid_bookmakers", "invalid_account_response"}
             code = str(exc)
             payload.update(status="offline", last_error=code if code in safe_codes else "invalid_account_response")
     payload["last_heartbeat_at"] = datetime.now(timezone.utc).isoformat()

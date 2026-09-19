@@ -137,7 +137,12 @@ producono `offline`. Non si sommano quote o bookmaker di subscription diverse.
 `metadata` contiene solo `request_limit`, `request_count`, `remaining_requests`
 (calcolato come `max(0, request_limit - request_count)`), `websocket_access`,
 `sport_ids`, `bookmaker_count` e `bookmaker_slugs` (ordinati). Si accettano
-contatori interi non negativi; limiti null o altri formati non documentati
+contatori interi JSON non negativi (non booleani); `websocket_access` accetta
+anche booleani, normalizzati a 0/1. `sport_ids` richiede una lista di interi
+non negativi. I bookmaker richiedono un oggetto con chiavi stringa non vuote,
+senza restrizioni regex sugli slug. Gli errori di campo sono distinti:
+`invalid_request_limit`, `invalid_request_count`, `invalid_websocket_access`,
+`invalid_sport_ids`, `invalid_bookmakers`. Limiti null o altri formati non documentati
 vengono segnalati offline invece di essere interpretati come quota illimitata.
 La risposta grezza e il campo `api_key` non vengono mai persistiti. I log HTTP
 sono disattivati sotto WARNING e gli errori salvati sono codici controllati,
