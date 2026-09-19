@@ -1,0 +1,24 @@
+# Segreti e configurazione locale
+.env
+.env.*
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Editor, sistema e log
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
