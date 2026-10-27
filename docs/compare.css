@@ -1,2 +1,20 @@
 /* QUOTESCOPE universal comparison */
 .cmp-sources{display:flex;gap:9px;flex-wrap:wrap;margin:12px 0 22px}.cmp-source{font-size:11px;color:#c1d1df;background:#17283a;border:1px solid #2f4a60;padding:9px 12px;border-radius:8px}.cmp-best{white-space:normal;min-width:260px;line-height:1.8;font-weight:500}.cmp-check{display:flex!important;flex-direction:row;align-items:center;gap:9px!important;padding-bottom:8px}.cmp-check input{accent-color:#4fe1b8;width:18px;height:18px}.cmp-stale{color:#efb57f!important;font-weight:700}#view-compare .panel{min-width:0}#view-compare table{min-width:980px}#view-compare .stats{grid-template-columns:repeat(4,minmax(0,1fr))}@media(max-width:850px){#view-compare .stats{grid-template-columns:repeat(2,1fr)}}
+
+/* QuoteScope UI: tabella a 2 operazioni leggibile anche con molti dettagli. */
+#pair-panel .table-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-gutter:stable}
+#pair-panel table{min-width:1150px;width:100%;table-layout:fixed;white-space:normal;border-collapse:separate;border-spacing:0}
+#pair-panel th,#pair-panel td{white-space:normal;overflow-wrap:anywhere;word-break:normal;vertical-align:top;line-height:1.5;padding:12px 12px 13px 6px}
+#pair-panel th:nth-child(1),#pair-panel td:nth-child(1){width:18%;position:sticky;left:0;background:var(--panel);z-index:2;box-shadow:8px 0 16px -14px #000}
+#pair-panel th:nth-child(1){z-index:3}
+#pair-panel th:nth-child(2),#pair-panel td:nth-child(2){width:14%}
+#pair-panel th:nth-child(3),#pair-panel td:nth-child(3),#pair-panel th:nth-child(4),#pair-panel td:nth-child(4){width:18%}
+#pair-panel th:nth-child(5),#pair-panel td:nth-child(5){width:17%}
+#pair-panel th:nth-child(6),#pair-panel td:nth-child(6){width:8%}
+#pair-panel th:nth-child(7),#pair-panel td:nth-child(7){width:7%}
+#pair-panel .pair-event-name{font-weight:700;color:#f2f7fa}
+#pair-panel .pair-event-date{font-size:11px;color:#93a9bb;margin-top:6px;font-weight:400}
+#pair-panel .pair-op-head{font-weight:700;color:#e8f6f2;margin-bottom:5px}
+#pair-panel .pair-op-cell{font-variant-numeric:tabular-nums}
+#pair-panel .pair-risk{color:#dfc394;font-size:11px;margin-top:5px}
+#view-compare .cmp-source-stale{border-color:#8b6743;color:#f2c992;background:#342a25}

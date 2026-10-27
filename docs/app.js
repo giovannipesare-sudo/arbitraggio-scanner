@@ -70,9 +70,12 @@ async function loadMarketDetails(r){
 
 function marketLabel(key){if(key==='1x2')return '1X2 finale';if(key==='btts')return 'Goal / No Goal';if(/^ou_\d+\.\d+$/.test(key))return 'Under/Over '+key.slice(3);return key||'—';}
 function sortReportMarkets(a,b){return (a.starts_at||'').localeCompare(b.starts_at||'') || (a.event||'').localeCompare(b.event||'');}
-function pairMarketName(key){
- if(key==='1x2_dc')return '1X2 + Doppia Chance';
- return marketLabel(key);
+function pairMarketName(item){
+ const key=item?.market||'';
+ if(key!=='1x2_dc')return marketLabel(key);
+ const usesDoubleChance=[item?.a?.selection,item?.b?.selection].some(s=>['1X','X2','12'].includes(String(s||'').toUpperCase()));
+ const label=usesDoubleChance?'1X2 / Doppia Chance':'1X2 finale';
+ return item?.kind==='BACK/LAY'?`${label} · BACK/LAY`:label;
 }
 function renderTwoLeg(){
  const body=$('pair-body');body.replaceChildren();
@@ -92,13 +95,22 @@ function renderTwoLeg(){
  if(!chosen.length){empty(body,7,'Non ci sono coppie confrontabili nel report');return;}
  for(const item of chosen.slice(0,100)){
   const tr=document.createElement('tr');
-  textCell(tr,`${item.event||'—'} · ${dt(item.starts_at)}`);
-  textCell(tr,pairMarketName(item.market));
+  const eventTd=document.createElement('td');
+  const eventName=document.createElement('div');eventName.className='pair-event-name';eventName.textContent=item.event||'—';
+  const eventDate=document.createElement('div');eventDate.className='pair-event-date';eventDate.textContent=dt(item.starts_at);
+  eventTd.append(eventName,eventDate);tr.append(eventTd);
+  textCell(tr,pairMarketName(item));
   for(const key of ['a','b']){
    const op=item[key]||{};
-   const stake=Number(op.stake_eur);
-   const note=op.action==='LAY'?` · responsabilità ${money(op.liability_eur)} €`:'';
-   textCell(tr,`${op.operator||'—'} ${op.action||''} ${op.selection||''} @ ${money(op.odds)} · ${money(stake)} €${note}`);
+   const td=document.createElement('td');td.className='pair-op-cell';
+   const head=document.createElement('div');head.className='pair-op-head';head.textContent=`${op.operator||'—'} · ${op.action||'—'} ${op.selection||'—'}`;
+   const odds=document.createElement('div');odds.textContent=`Quota ${money(op.odds)} · importo ${money(op.stake_eur)} €`;
+   td.append(head,odds);
+   if(op.action==='LAY'){
+    const risk=document.createElement('div');risk.className='pair-risk';risk.textContent=`Responsabilità ${money(op.liability_eur)} €`;
+    td.append(risk);
+   }
+   tr.append(td);
   }
   const outcomes=Object.entries(item.scenario_profits_eur||{}).map(([k,v])=>`${k}: ${money(v)} €`).join(' | ');
   textCell(tr,outcomes);
@@ -126,8 +138,13 @@ function renderUniversalComparison(){
   const captured=info&&typeof info==='object'?info.captured_at:null;
   const sourceAge=captured?(Date.now()-Date.parse(captured))/1000:Infinity;
   const limit=name==='BETFAIR'?180:900;
-  const state=(Number.isFinite(sourceAge)&&sourceAge>=-60&&sourceAge<limit)?`rilevato ${dt(captured)}`:'non aggiornato';
-  chip.textContent=`${name}${name==='BETFAIR'?' (DELAYED)':''}: ${state}`;
+  const validAge=Number.isFinite(sourceAge)&&sourceAge>=-60;
+  const recent=validAge&&sourceAge<limit;
+  const elapsed=!validAge?'orario da verificare':sourceAge<60?`${Math.max(0,Math.round(sourceAge))} s fa`:`${Math.floor(sourceAge/60)} min fa`;
+  if(!recent)chip.classList.add('cmp-source-stale');
+  const label=name==='BETFAIR'?'BETFAIR · dati Exchange ritardati':name;
+  const note=recent?'':` · oltre ${Math.round(limit/60)} min`;
+  chip.textContent=captured?`${label}: rilevazione ${dt(captured)} · ${elapsed}${note}`:`${label}: nessuna rilevazione disponibile`;
   $('cmp-sources').append(chip);
  }
  const marketFilter=$('cmp-market-filter').value;
