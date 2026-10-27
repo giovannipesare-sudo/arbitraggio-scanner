@@ -70,7 +70,47 @@ async function loadMarketDetails(r){
 
 function marketLabel(key){if(key==='1x2')return '1X2 finale';if(key==='btts')return 'Goal / No Goal';if(/^ou_\d+\.\d+$/.test(key))return 'Under/Over '+key.slice(3);return key||'—';}
 function sortReportMarkets(a,b){return (a.starts_at||'').localeCompare(b.starts_at||'') || (a.event||'').localeCompare(b.event||'');}
+function pairMarketName(key){
+ if(key==='1x2_dc')return '1X2 + Doppia Chance';
+ return marketLabel(key);
+}
+function renderTwoLeg(){
+ const body=$('pair-body');body.replaceChildren();
+ const r=comparisonReport;
+ const props=[['pair-count','two_leg_pairs_evaluated'],['pair-positive','two_leg_positive_count'],['pair-backback','two_leg_back_back_positive'],['pair-backlay','two_leg_back_lay_positive']];
+ for(const [id,key] of props)$(id).textContent=Number.isFinite(r?.[key])?r[key].toLocaleString('it-IT'):'—';
+ if(!r || !Number.isFinite(r.two_leg_pairs_evaluated)){
+  $('pair-note').textContent='Motore a due operazioni non ancora attivo. Avvia lo scanner aggiornato e attendi una nuova rilevazione.';
+  empty(body,7,'Report a due operazioni non ancora disponibile');return;
+ }
+ const positives=Array.isArray(r.two_leg_opportunities)?r.two_leg_opportunities:[];
+ const diagnostics=Array.isArray(r.two_leg_best_comparisons)?r.two_leg_best_comparisons:[];
+ const chosen=positives.length?positives:diagnostics.slice(0,25);
+ $('pair-note').textContent=positives.length
+  ? `Combinazioni solo teoriche con profitto positivo: ${r.two_leg_positive_count}. Nessuna eseguibilità certificata.`
+  : `Nessun arbitraggio a due operazioni teoricamente positivo. Di seguito le 25 combinazioni più vicine alla soglia, anche in perdita.`;
+ if(!chosen.length){empty(body,7,'Non ci sono coppie confrontabili nel report');return;}
+ for(const item of chosen.slice(0,100)){
+  const tr=document.createElement('tr');
+  textCell(tr,`${item.event||'—'} · ${dt(item.starts_at)}`);
+  textCell(tr,pairMarketName(item.market));
+  for(const key of ['a','b']){
+   const op=item[key]||{};
+   const stake=Number(op.stake_eur);
+   const note=op.action==='LAY'?` · responsabilità ${money(op.liability_eur)} €`:'';
+   textCell(tr,`${op.operator||'—'} ${op.action||''} ${op.selection||''} @ ${money(op.odds)} · ${money(stake)} €${note}`);
+  }
+  const outcomes=Object.entries(item.scenario_profits_eur||{}).map(([k,v])=>`${k}: ${money(v)} €`).join(' | ');
+  textCell(tr,outcomes);
+  const td=textCell(tr,`${money(item.min_profit_eur)} €`);
+  if(Number(item.min_profit_eur)>0)td.className='profit';
+  textCell(tr,`${money(item.roi_pct)}%${item.kind==='BACK/LAY'?' · DELAYED':''}`);
+  body.append(tr);
+ }
+}
+
 function renderUniversalComparison(){
+ renderTwoLeg();
  const body=$('cmp-markets-body'),layBody=$('cmp-lay-body'),r=comparisonReport;
  const status=$('cmp-last');
  for(const [id,field] of [['cmp-events','matched_events'],['cmp-three','events_with_three_sources'],['cmp-markets','markets_compared'],['cmp-three-markets','markets_with_three_sources'],['cmp-backlay','betfair_lay_comparisons']])$(id).textContent=Number.isFinite(r?.[field])?Number(r[field]).toLocaleString('it-IT'):'—';
