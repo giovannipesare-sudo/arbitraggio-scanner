@@ -14,12 +14,12 @@ const empty = (target, count, message) => {const tr=document.createElement('tr')
 const median = nums => {if(!nums.length)return null;const a=[...nums].sort((a,b)=>a-b);const mid=Math.floor(a.length/2);return a.length%2?a[mid]:(a[mid-1]+a[mid])/2;};
 let sb, currentUser, opportunities=[], runs=[], contacts=[], marketSources=[], comparisonReport=null;
 
-function nav(section){const target=['overview','history','quotes','compare','alerts','system'].includes(section)?section:'overview';for(const name of ['overview','history','quotes','compare','alerts','system'])show(`view-${name}`,name===target);for(const a of document.querySelectorAll('.nav'))a.classList.toggle('active',a.dataset.section===target);$('page-title').textContent={overview:'Panoramica',history:'Storico opportunità',quotes:'Quote bookmaker',compare:'Confronto quote',alerts:'Notifiche',system:'Stato acquisizione'}[target];}
+function nav(section){const target=['overview','history','quotes','comparison-all','best-quote','found','compare','alerts','system'].includes(section)?section:'overview';for(const name of ['overview','history','quotes','comparison-all','best-quote','found','compare','alerts','system'])show(`view-${name}`,name===target);for(const a of document.querySelectorAll('.nav'))a.classList.toggle('active',a.dataset.section===target);$('page-title').textContent={overview:'Panoramica',history:'Storico opportunità',quotes:'Quote bookmaker','comparison-all':'Tutti i confronti','best-quote':'Migliore quota',found:'Opportunità trovate',compare:'Diagnostica mercati',alerts:'Notifiche',system:'Stato acquisizione'}[target];}
 function prettyState(row){return row.status==='active'?'Attiva':'Conclusa';}
 function renderOpRows(id,arr,history=false){const body=$(id);body.replaceChildren();if(!arr.length){empty(body,history?8:6,'Nessuna opportunità registrata per questi filtri');return;}for(const r of arr){const tr=document.createElement('tr');if(history){textCell(tr,r.event_name);textCell(tr,r.outcome);const state=textCell(tr,prettyState(r));state.className='pill '+(r.status==='active'?'':'closed');textCell(tr,dt(r.first_seen_at));textCell(tr,dt(r.last_seen_at));textCell(tr,fmtDur(duration(r)));textCell(tr,`${money(r.best_margin_pct)}%`,'profit');textCell(tr,r.observation_count);}else{textCell(tr,`${r.event_name} · ${r.outcome}`);textCell(tr,money(r.snai_odds));textCell(tr,money(r.betfair_lay));textCell(tr,`${money(r.last_margin_pct)}%`,'profit');textCell(tr,fmtDur(duration(r)));textCell(tr,r.observation_count);}body.append(tr);}}
 function renderRecent(arr){const body=$('recent-body');body.replaceChildren();if(!arr.length){empty(body,6,'Nessun episodio concluso');return;}for(const r of arr){const tr=document.createElement('tr');textCell(tr,r.event_name);textCell(tr,r.outcome);textCell(tr,dt(r.first_seen_at));textCell(tr,dt(r.last_seen_at));textCell(tr,fmtDur(duration(r)));textCell(tr,`${money(r.best_margin_pct)}%`,'profit');body.append(tr);}}
 function renderChart(closed){const edges=[15,30,60,180,Infinity],labels=['0–14s','15–29s','30–59s','1–3 min','> 3 min'];const counts=[0,0,0,0,0];for(const r of closed){const s=duration(r);counts[edges.findIndex(x=>s<x)]++;}const max=Math.max(...counts,1);const host=$('duration-chart');host.replaceChildren();counts.forEach((num,i)=>{const row=document.createElement('div');row.className='bar-row';const label=document.createElement('span');label.textContent=labels[i];const track=document.createElement('div');track.className='bar-track';const fill=document.createElement('div');fill.className='bar-fill';fill.style.width=`${100*num/max}%`;track.append(fill);const count=document.createElement('span');count.textContent=num;row.append(label,track,count);host.append(row);});}
-function render(){renderMarketSources();renderUniversalComparison();const now=Date.now(),last24=now-86400000,active=opportunities.filter(r=>r.status==='active'),lastDay=opportunities.filter(r=>Date.parse(r.first_seen_at)>=last24),closed=opportunities.filter(r=>r.status==='closed'&&Date.parse(r.last_seen_at)>=last24);
+function render(){renderMarketSources();renderUniversalComparison();renderNewPages();const now=Date.now(),last24=now-86400000,active=opportunities.filter(r=>r.status==='active'),lastDay=opportunities.filter(r=>Date.parse(r.first_seen_at)>=last24),closed=opportunities.filter(r=>r.status==='closed'&&Date.parse(r.last_seen_at)>=last24);
  $('m-active').textContent=active.length;$('m-day').textContent=lastDay.length;$('m-duration').textContent=closed.length?fmtDur(median(closed.map(duration))):'—';
  const last=runs[0];$('m-last').textContent=last?new Date(last.checked_at).toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}):'—';$('m-last-sub').textContent=last?dt(last.checked_at):'In attesa dello scanner';
  let state='offline',label='● Scanner non attivo';if(last){const age=(now-Date.parse(last.checked_at))/1000;if(age<180&&last.status==='ok'){state='ok';label='● Scanner operativo';}else if(age<180){state='bad';label='● Acquisizione incompleta';}else{label='● Scanner offline / inattivo';}}
@@ -70,12 +70,13 @@ async function loadMarketDetails(r){
 
 function marketLabel(key){if(key==='1x2')return '1X2 finale';if(key==='btts')return 'Goal / No Goal';if(/^ou_\d+\.\d+$/.test(key))return 'Under/Over '+key.slice(3);return key||'—';}
 function sortReportMarkets(a,b){return (a.starts_at||'').localeCompare(b.starts_at||'') || (a.event||'').localeCompare(b.event||'');}
+function displayAction(action){return action==='BACK'?'PUNTATA':action==='LAY'?'BANCATA':action;}
 function pairMarketName(item){
  const key=item?.market||'';
  if(key!=='1x2_dc')return marketLabel(key);
  const usesDoubleChance=[item?.a?.selection,item?.b?.selection].some(s=>['1X','X2','12'].includes(String(s||'').toUpperCase()));
  const label=usesDoubleChance?'1X2 / Doppia Chance':'1X2 finale';
- return item?.kind==='BACK/LAY'?`${label} · BACK/LAY`:label;
+ return item?.kind==='BACK/LAY'?`${label} · PUNTATA/BANCATA`:label;
 }
 function renderTwoLeg(){
  const body=$('pair-body');body.replaceChildren();
@@ -103,7 +104,7 @@ function renderTwoLeg(){
   for(const key of ['a','b']){
    const op=item[key]||{};
    const td=document.createElement('td');td.className='pair-op-cell';
-   const head=document.createElement('div');head.className='pair-op-head';head.textContent=`${op.operator||'—'} · ${op.action||'—'} ${op.selection||'—'}`;
+   const head=document.createElement('div');head.className='pair-op-head';head.textContent=`${op.operator||'—'} · ${displayAction(op.action)||'—'} ${op.selection||'—'}`;
    const odds=document.createElement('div');odds.textContent=`Quota ${money(op.odds)} · importo ${money(op.stake_eur)} €`;
    td.append(head,odds);
    if(op.action==='LAY'){
@@ -178,7 +179,7 @@ function renderUniversalComparison(){
    if(layCount++>=100)break;
    const tr=document.createElement('tr');
    textCell(tr,event.event);textCell(tr,x.selection);textCell(tr,`${x.back_bookmaker} · ${money(x.back_odds)}`);
-   textCell(tr,`Betfair LAY · ${money(x.lay_odds)}`);
+   textCell(tr,`Betfair BANCATA · ${money(x.lay_odds)}`);
    textCell(tr,`${money(x.lay_available_eur)} €`);
    textCell(tr,`${money(x.liability_eur)} €`);
    const win=Number(x.profit_if_win_eur),lose=Number(x.profit_if_lose_eur);
@@ -206,3 +207,107 @@ $('login-form').addEventListener('submit',async e=>{e.preventDefault();const b=e
 $('logout').addEventListener('click',()=>sb.auth.signOut());$('refresh').addEventListener('click',refresh);$('filter-state').addEventListener('change',filterHistory);$('filter-margin').addEventListener('input',filterHistory);$('cmp-market-filter').addEventListener('change',renderUniversalComparison);$('cmp-three-filter').addEventListener('change',renderUniversalComparison);$('download-csv').addEventListener('click',()=>csv(opportunities));$('history-export').addEventListener('click',()=>csv(opportunities));window.addEventListener('hashchange',()=>nav((location.hash||'#overview').slice(1)));
 $('contact-form').addEventListener('submit',async e=>{e.preventDefault();const msg=$('contact-msg');const phone=$('contact-phone').value.trim();if(!/^\+[1-9]\d{7,14}$/.test(phone)){msg.textContent='Numero non valido: usa il formato +393331234567.';return;}const row={owner_id:currentUser.id,label:$('contact-name').value.trim(),phone_e164:phone,min_margin_pct:Number($('contact-margin').value),min_confirmations:Number($('contact-confirm').value),consent_confirmed_at:new Date().toISOString(),enabled:true};const {error}=await sb.from('notification_contacts').insert(row);msg.textContent=error?'Impossibile salvare: '+error.message:'Destinatario salvato. SMS disponibili solo dopo configurazione del provider.';if(!error){$('contact-form').reset();await refresh();}});
 setInterval(()=>{if(currentUser)refresh();},30000);init().catch(err=>{$('setup').hidden=false;console.error('Initialization error',err.message)});
+
+
+/* QuoteScope unified UI: 3 user-oriented views. All calculations remain server-side. */
+const qsState={key:'roi_pct',direction:-1,page:0,size:70,all:[]};
+const qsNorm=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('it-IT').replace(/[^a-z0-9]+/g,' ').trim();
+const qsAction=op=>op==='LAY'?'BANCATA':op==='BACK'?'PUNTATA':(op||'—');
+const qsName=m=>m==='dc'?'Doppia Chance':m==='1x2_dc'?'1X2 / Doppia Chance':marketLabel(m);
+const qsFormatOp=op=>{op=op||{};const risk=op.action==='LAY'?` · responsabilità ${money(op.liability_eur)} €`:'';return `${op.operator||'—'} · ${qsAction(op.action)} ${op.selection||'—'} · quota ${money(op.odds)} · importo ${money(op.stake_eur)} €${risk}`;};
+const qsCandidates=()=>Array.isArray(comparisonReport?.two_leg_all_comparisons)?comparisonReport.two_leg_all_comparisons:[];
+const qsFresh=(operator)=>{const x=(comparisonReport?.source_status||{})[operator];if(!x||typeof x!=='object')return false;const age=(Date.now()-Date.parse(x.captured_at))/1000;return Number.isFinite(age)&&age>=-60&&age< (operator==='BETFAIR'?180:900);};
+function qsResultsFiltered(){
+ const q=qsNorm($('qs-all-query').value),market=$('qs-all-market').value,kind=$('qs-all-kind').value;
+ return qsCandidates().filter(r=>{
+  if(market!=='all'&&r.market!==market)return false;
+  if(kind!=='all'&&r.kind!==kind)return false;
+  if(!q)return true;
+  const data=qsNorm(`${r.event||''} ${r.a?.operator||''} ${r.b?.operator||''} ${r.a?.selection||''} ${r.b?.selection||''}`);
+  return q.split(' ').every(token=>data.includes(token));
+ }).sort((a,b)=>{
+  const k=qsState.key;const av=a[k],bv=b[k];
+  if(k==='roi_pct'||k==='min_profit_eur')return qsState.direction*(Number(av)-Number(bv));
+  return qsState.direction*String(av||'').localeCompare(String(bv||''),'it-IT',{numeric:true});
+ });
+}
+function qsRenderAll(){
+ const rows=qsResultsFiltered();qsState.all=rows;
+ $('qs-all-total').textContent=Number(comparisonReport?.two_leg_pairs_evaluated||0).toLocaleString('it-IT');
+ $('qs-all-positive').textContent=Number(comparisonReport?.two_leg_positive_count||0).toLocaleString('it-IT');
+ const allPresent=Array.isArray(comparisonReport?.two_leg_all_comparisons);
+ $('qs-all-note').textContent=allPresent?`Mostrate ${rows.length.toLocaleString('it-IT')} combinazioni su ${qsCandidates().length.toLocaleString('it-IT')} disponibili nel report. Clicca su Data, Evento, Mercato, Profitto o Redditività per ordinare.`:'Attendere il primo report prodotto dallo scanner aggiornato: il vecchio report non contiene tutte le coppie.';
+ qsState.page=Math.min(qsState.page,Math.max(0,Math.ceil(rows.length/qsState.size)-1));
+ const start=qsState.page*qsState.size,chunk=rows.slice(start,start+qsState.size),body=$('qs-all-body');body.replaceChildren();
+ if(!chunk.length){empty(body,8,allPresent?'Nessun confronto corrisponde ai filtri':'Nessun report completo disponibile');}
+ for(const r of chunk){
+  const tr=document.createElement('tr');
+  textCell(tr,dt(r.starts_at));textCell(tr,r.event);textCell(tr,qsName(r.market));
+  textCell(tr,qsFormatOp(r.a));textCell(tr,qsFormatOp(r.b));
+  textCell(tr,Object.entries(r.scenario_profits_eur||{}).map(([k,v])=>`${k}: ${money(v)} €`).join(' · '));
+  const td=textCell(tr,`${money(r.min_profit_eur)} €`);if(r.min_profit_eur>0)td.className='profit';
+  const roi=textCell(tr,`${money(r.roi_pct)}%${r.kind==='BACK/LAY'?' · DELAYED':''}`);if(r.roi_pct>0)roi.className='profit';
+  body.append(tr);
+ }
+ $('qs-all-page-info').textContent=rows.length?`${start+1}–${Math.min(rows.length,start+qsState.size)} di ${rows.length}`:'0 risultati';
+ $('qs-all-prev').disabled=qsState.page<=0;$('qs-all-next').disabled=start+qsState.size>=rows.length;
+}
+function qsSelections(){
+ const m=$('qs-best-market').value;
+ const vals=m==='1x2'?['1','X','2']:m==='dc'?['1X','12','X2']:m==='btts'?['GOAL','NOGOAL']:['OVER','UNDER'];
+ const sel=$('qs-best-selection');sel.replaceChildren();
+ for(const value of vals){const opt=document.createElement('option');opt.value=value;opt.textContent=value==='NOGOAL'?'No Goal':value;sel.append(opt);}
+}
+function qsRenderBest(){
+ const q=qsNorm($('qs-best-event').value),m=$('qs-best-market').value,sel=$('qs-best-selection').value;
+ const body=$('qs-best-body');body.replaceChildren();$('qs-best-winner').replaceChildren();
+ const list=Array.isArray(comparisonReport?.best_quote_offers)?comparisonReport.best_quote_offers:[];
+ if(!list.length){$('qs-best-note').textContent='Attendere una nuova acquisizione: indice delle quote non ancora disponibile.';empty(body,5,'Nessuna quota disponibile');return;}
+ if(!q){$('qs-best-note').textContent='Digita il nome di una partita (anche senza trattino), poi scegli mercato ed esito.';empty(body,5,'Inserire una partita');return;}
+ const tokens=q.split(' ').filter(Boolean);
+ const rows=list.filter(r=>r.market===m&&r.selection===sel&&tokens.every(t=>qsNorm(r.event).includes(t))&&qsFresh(r.operator)).sort((a,b)=>Number(b.odds)-Number(a.odds));
+ $('qs-best-note').textContent=`${rows.length} quote corrispondenti · solo fonti aggiornate · prezzo non garantito`;
+ if(!rows.length){empty(body,5,'Nessuna corrispondenza. Verifica il nome della partita o l’aggiornamento delle fonti.');return;}
+ const best=rows[0];const host=$('qs-best-winner');
+ const title=document.createElement('strong');title.textContent=`Migliore PUNTATA: ${best.operator} @ ${money(best.odds)}`;
+ const note=document.createElement('div');note.textContent=`${best.event} · ${qsName(best.market)} · ${best.selection}${best.delayed?' · BETFAIR DELAYED':''}`;
+ host.append(title,note);
+ for(const r of rows.slice(0,150)){
+  const tr=document.createElement('tr');textCell(tr,`${r.event} · ${dt(r.starts_at)}`);textCell(tr,r.operator);
+  const v=textCell(tr,money(r.odds));if(r===best)v.className='profit';
+  textCell(tr,dt(r.source_captured_at));textCell(tr,r.delayed?'Exchange ritardato':'Puntata bookmaker');body.append(tr);
+ }
+}
+function qsRenderFound(){
+ const rows=qsCandidates().filter(r=>Number(r.min_profit_eur)>0).sort((a,b)=>b.roi_pct-a.roi_pct);
+ $('qs-found-count').textContent=rows.length.toLocaleString('it-IT');
+ $('qs-found-updated').textContent=dt(comparisonReport?.captured_at);
+ $('qs-found-note').textContent=rows.length?`${rows.length} combinazioni teoriche positive. Nessuna quota è garantita eseguibile.`:'Nessuna combinazione positiva rilevata nel report attuale.';
+ const body=$('qs-found-body');body.replaceChildren();
+ if(!rows.length){empty(body,8,'Nessuna opportunità con profitto minimo positivo');return;}
+ for(const r of rows.slice(0,200)){
+  const tr=document.createElement('tr');textCell(tr,`${r.event} · ${dt(r.starts_at)}`);textCell(tr,qsName(r.market));
+  textCell(tr,qsFormatOp(r.a));textCell(tr,qsFormatOp(r.b));
+  textCell(tr,`${money(r.risk_capital_eur??r.stakes_total_eur)} €`);
+  textCell(tr,`${money(r.min_profit_eur)} €`,'profit');textCell(tr,`${money(r.roi_pct)}%`,'profit');
+  const fresh=qsFresh(r.a?.operator)&&qsFresh(r.b?.operator);
+  textCell(tr,`${fresh?'Fonti recenti':'DATI NON RECENTI'}${r.kind==='BACK/LAY'?' · Betfair ritardato':''}`);
+  body.append(tr);
+ }
+}
+function renderNewPages(){qsRenderAll();qsRenderBest();qsRenderFound();}
+function qsExportAll(){
+ const rows=qsState.all;if(!rows.length)return;
+ const header=['data','evento','mercato','tipo','operazione1','operazione2','profitti','profitto_minimo','redditivita'];
+ const safe=v=>{let s=String(v??'');if(/^[\s]*[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';};
+ const content='\uFEFF'+[header,...rows.map(r=>[r.starts_at,r.event,qsName(r.market),r.kind,qsFormatOp(r.a),qsFormatOp(r.b),JSON.stringify(r.scenario_profits_eur),r.min_profit_eur,r.roi_pct])].map(row=>row.map(safe).join(';')).join('\r\n');
+ const u=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=u;a.download='quotescope_tutti_confronti.csv';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);
+}
+for(const id of ['qs-all-query','qs-all-market','qs-all-kind'])$(id).addEventListener(id==='qs-all-query'?'input':'change',()=>{qsState.page=0;qsRenderAll();});
+for(const th of document.querySelectorAll('[data-qs-sort]'))th.addEventListener('click',()=>{const key=th.dataset.qsSort;qsState.direction=qsState.key===key?-qsState.direction:(key==='roi_pct'||key==='min_profit_eur'?-1:1);qsState.key=key;qsState.page=0;qsRenderAll();});
+$('qs-all-prev').addEventListener('click',()=>{qsState.page=Math.max(0,qsState.page-1);qsRenderAll();});
+$('qs-all-next').addEventListener('click',()=>{qsState.page++;qsRenderAll();});
+$('qs-all-export').addEventListener('click',qsExportAll);
+$('qs-best-event').addEventListener('input',qsRenderBest);
+$('qs-best-market').addEventListener('change',()=>{qsSelections();qsRenderBest();});
+$('qs-best-selection').addEventListener('change',qsRenderBest);

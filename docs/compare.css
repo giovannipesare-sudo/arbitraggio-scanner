@@ -18,3 +18,20 @@
 #pair-panel .pair-op-cell{font-variant-numeric:tabular-nums}
 #pair-panel .pair-risk{color:#dfc394;font-size:11px;margin-top:5px}
 #view-compare .cmp-source-stale{border-color:#8b6743;color:#f2c992;background:#342a25}
+
+/* QuoteScope v20261101: pages with responsive filters and accessible sortable grid */
+.qs-filter-grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;align-items:end}
+.qs-filter-grid label{display:flex;flex-direction:column;gap:8px;font-size:12px;color:#abc0cc}
+.qs-filter-grid input,.qs-filter-grid select{background:#0b1928;border:1px solid #355065;color:#f4fbff;padding:10px;border-radius:7px;min-width:0;width:100%}
+.qs-summary{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.qs-results{min-width:1220px;white-space:normal}
+.qs-results th,.qs-results td{white-space:normal;min-width:90px;vertical-align:top;line-height:1.55}
+.qs-results th[data-qs-sort]{cursor:pointer;user-select:none;color:#bdccda}
+.qs-results th[data-qs-sort]:hover{text-decoration:underline;color:#4fe1b8}
+.qs-results td:nth-child(4),.qs-results td:nth-child(5){min-width:185px}
+.qs-pager{display:flex;justify-content:space-between;align-items:center;margin-top:16px;gap:10px;font-size:12px;color:#abc0cc}
+.qs-best-winner{border:1px solid #376a60;background:#193837;border-radius:9px;padding:15px;margin:15px 0;color:#dafff3;line-height:1.7}
+.qs-best-winner:empty{display:none}
+.qs-best-winner strong{font-size:19px}
+.qs-datetime{font-size:18px!important}
+@media(max-width:850px){.qs-filter-grid{grid-template-columns:1fr}.qs-summary{grid-template-columns:1fr!important}}
