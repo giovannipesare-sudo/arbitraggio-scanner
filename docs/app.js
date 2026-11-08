@@ -14,7 +14,7 @@ const empty = (target, count, message) => {const tr=document.createElement('tr')
 const median = nums => {if(!nums.length)return null;const a=[...nums].sort((a,b)=>a-b);const mid=Math.floor(a.length/2);return a.length%2?a[mid]:(a[mid-1]+a[mid])/2;};
 let sb, currentUser, opportunities=[], runs=[], contacts=[], marketSources=[], comparisonReport=null;
 
-function nav(section){const target=['overview','history','quotes','comparison-all','best-quote','found','compare','alerts','system'].includes(section)?section:'overview';for(const name of ['overview','history','quotes','comparison-all','best-quote','found','compare','alerts','system'])show(`view-${name}`,name===target);for(const a of document.querySelectorAll('.nav'))a.classList.toggle('active',a.dataset.section===target);$('page-title').textContent={overview:'Panoramica',history:'Storico opportunità',quotes:'Quote bookmaker','comparison-all':'Tutti i confronti','best-quote':'Migliore quota',found:'Opportunità trovate',compare:'Diagnostica mercati',alerts:'Notifiche',system:'Stato acquisizione'}[target];}
+function nav(section){const target=['overview','history','quotes','comparison-all','best-quote','found','signal-history','compare','alerts','system'].includes(section)?section:'overview';for(const name of ['overview','history','quotes','comparison-all','best-quote','found','signal-history','compare','alerts','system'])show(`view-${name}`,name===target);for(const a of document.querySelectorAll('.nav'))a.classList.toggle('active',a.dataset.section===target);$('page-title').textContent={overview:'Panoramica',history:'Storico opportunità',quotes:'Quote bookmaker','comparison-all':'Tutti i confronti','best-quote':'Migliore quota',found:'Opportunità trovate','signal-history':'Archivio segnali',compare:'Diagnostica mercati',alerts:'Notifiche',system:'Stato acquisizione'}[target];}
 function prettyState(row){return row.status==='active'?'Attiva':'Conclusa';}
 function renderOpRows(id,arr,history=false){const body=$(id);body.replaceChildren();if(!arr.length){empty(body,history?8:6,'Nessuna opportunità registrata per questi filtri');return;}for(const r of arr){const tr=document.createElement('tr');if(history){textCell(tr,r.event_name);textCell(tr,r.outcome);const state=textCell(tr,prettyState(r));state.className='pill '+(r.status==='active'?'':'closed');textCell(tr,dt(r.first_seen_at));textCell(tr,dt(r.last_seen_at));textCell(tr,fmtDur(duration(r)));textCell(tr,`${money(r.best_margin_pct)}%`,'profit');textCell(tr,r.observation_count);}else{textCell(tr,`${r.event_name} · ${r.outcome}`);textCell(tr,money(r.snai_odds));textCell(tr,money(r.betfair_lay));textCell(tr,`${money(r.last_margin_pct)}%`,'profit');textCell(tr,fmtDur(duration(r)));textCell(tr,r.observation_count);}body.append(tr);}}
 function renderRecent(arr){const body=$('recent-body');body.replaceChildren();if(!arr.length){empty(body,6,'Nessun episodio concluso');return;}for(const r of arr){const tr=document.createElement('tr');textCell(tr,r.event_name);textCell(tr,r.outcome);textCell(tr,dt(r.first_seen_at));textCell(tr,dt(r.last_seen_at));textCell(tr,fmtDur(duration(r)));textCell(tr,`${money(r.best_margin_pct)}%`,'profit');body.append(tr);}}
@@ -295,7 +295,45 @@ function qsRenderFound(){
   body.append(tr);
  }
 }
-function renderNewPages(){qsRenderAll();qsRenderBest();qsRenderFound();}
+
+// QuoteScope: storico diagnostico degli episodi positivi gia pubblicati.
+function qsRenderArchive(){
+  const archive=comparisonReport?.signal_history;
+  const entries=Array.isArray(archive?.items)?archive.items:[];
+  const search=$('qs-archive-query');
+  if(!search)return;
+  const linked=new URLSearchParams(location.search).get('signal');
+  if(linked && !search.value)search.value=linked.slice(0,80);
+  const q=qsNorm(search.value);
+  const filtered=entries.filter(r=>{
+    if(!q)return true;
+    const s=qsNorm([r.id,r.event,r.market,r.a?.operator,r.b?.operator,r.a?.selection,r.b?.selection].join(' '));
+    return q.split(' ').every(part=>s.includes(part));
+  });
+  $('qs-archive-count').textContent=entries.length.toLocaleString('it-IT');
+  $('qs-archive-note').textContent=archive
+    ? `Mostrati ${Math.min(filtered.length,200)} su ${filtered.length} corrispondenti. ${archive.local_count||entries.length} episodi archiviati sul PC. Solo ultime ${archive.online_limit||400} schede online. La presenza non certifica eseguibilità.`
+    : 'Archivio non ancora pubblicato. Installare il componente locale per iniziare a registrare nuovi segnali; non è possibile ricostruire i messaggi precedenti.';
+  const body=$('qs-archive-body');body.replaceChildren();
+  if(!filtered.length){empty(body,10,entries.length?'Nessun segnale corrispondente alla ricerca':'Nessun segnale archiviato');return;}
+  for(const r of filtered.slice(0,200)){
+    const tr=document.createElement('tr');
+    textCell(tr,r.id||'—');
+    textCell(tr,`${r.event||'—'} · ${dt(r.starts_at)}`);
+    textCell(tr,qsName(r.market));
+    textCell(tr,`${dt(r.first_seen_at)} / ${dt(r.last_seen_at)}`);
+    textCell(tr,qsFormatOp(r.a));textCell(tr,qsFormatOp(r.b));
+    textCell(tr,`${money(r.risk_capital_eur)} €`);
+    const td=textCell(tr,`${money(r.last_profit_eur)} €`);td.className='profit';
+    textCell(tr,`${money(r.best_profit_eur)} €`);
+    const sources=Object.entries(r.source_snapshot_times||{}).map(([k,t])=>`${k}: ${dt(t)}`).join(' · ');
+    textCell(tr,`${r.status==='in_latest_report'?'Presente nel report':'Non presente nell’ultimo report'}${r.betfair_delayed?' · Exchange ritardato':''}${sources?' · Snapshot '+sources:''}`);
+    body.append(tr);
+  }
+}
+$('qs-archive-query').addEventListener('input',qsRenderArchive);
+
+function renderNewPages(){qsRenderAll();qsRenderBest();qsRenderFound();qsRenderArchive();}
 function qsExportAll(){
  const rows=qsState.all;if(!rows.length)return;
  const header=['data','evento','mercato','tipo','operazione1','operazione2','profitti','profitto_minimo','redditivita'];
