@@ -35,3 +35,23 @@
 .qs-best-winner strong{font-size:19px}
 .qs-datetime{font-size:18px!important}
 @media(max-width:850px){.qs-filter-grid{grid-template-columns:1fr}.qs-summary{grid-template-columns:1fr!important}}
+
+/* QuoteScope UI 2.0 — unico registro di confronti con schede espandibili */
+.qs-filter-grid{grid-template-columns:minmax(180px,2fr) minmax(140px,1fr) minmax(150px,1fr) auto}
+.qs-results{min-width:830px;width:100%;white-space:normal}
+.qs-results th,.qs-results td{min-width:0;vertical-align:middle;padding:12px 12px 12px 0}
+#view-comparison-all .qs-results td:nth-child(4),#view-comparison-all .qs-results td:nth-child(5){min-width:0}
+#view-comparison-all .qs-comparison-row td:nth-child(2){min-width:190px}
+.qs-comparison-row td{line-height:1.45}
+.qs-comparison-row:hover td{background:#162a40}
+.qs-fonts{font-weight:600;color:#c3dfed;white-space:normal}
+.qs-comparison-detail td{background:#172e42!important;border-bottom:2px solid #36576b!important;padding:15px!important}
+.qs-ops-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.qs-op-card{border:1px solid #355365;border-radius:8px;padding:13px;background:#11263a}
+.qs-op-card strong{display:block;font-size:11px;color:#6be9bf;margin-bottom:7px}
+.qs-op-card p{color:#cde0e8;font-size:12px;margin:0;line-height:1.6}
+.qs-detail-caption{color:#b7cbd5;font-size:11px;line-height:1.7;margin:12px 0 0}
+.qs-results th[data-qs-sort]{white-space:normal}
+#view-compare .stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:1200px){.qs-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.qs-filter-grid .qs-inline-check{align-self:end}}
+@media(max-width:850px){.qs-filter-grid{grid-template-columns:1fr}.qs-ops-grid{grid-template-columns:1fr}.qs-results{min-width:760px}}
