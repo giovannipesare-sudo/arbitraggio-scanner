@@ -380,6 +380,54 @@ function qsResultsFiltered(){
   return qsState.direction*String(av||'').localeCompare(String(bv||''),'it-IT',{numeric:true});
  });
 }
+// Calcolo di sola presentazione. Nessuna quota o puntata viene inviata ai bookmaker.
+// Gli importi sono ricalcolati sugli esiti originali, inclusi gli arrotondamenti ai centesimi.
+function qsSimulationBudget(){
+ const n=Number($('qs-sim-capital').value);
+ return Number.isFinite(n)&&n>=10&&n<=10000?Math.round(n*100)/100:100;
+}
+function qsSelectionWins(selection,state,market){
+ const sel=String(selection||'').toUpperCase(),s=String(state||'').toUpperCase();
+ if(market==='1x2_dc'){
+  const masks={'1':['1'],'X':['X'],'2':['2'],'1X':['1','X'],'X2':['X','2'],'12':['1','2']};
+  return (masks[sel]||[]).includes(s);
+ }
+ return sel===s;
+}
+function qsSimulatePair(item){
+ const a=item?.a||{},b=item?.b||{},lay=item?.kind==='BACK/LAY';
+ const originalRisk=lay?Number(item?.risk_capital_eur):Number(item?.stakes_total_eur);
+ const oddsA=Number(a.odds),oddsB=Number(b.odds);
+ const keys=Object.keys(item?.scenario_profits_eur||{});
+ if(!(originalRisk>0&&oddsA>1&&oddsB>1&&keys.length>=2))return null;
+ const target=qsSimulationBudget(),factor=target/originalRisk;
+ const stakeA=Math.round(Number(a.stake_eur)*factor*100)/100;
+ const stakeB=lay?Math.round(Number(b.stake_eur)*factor*100)/100:Math.round((target-stakeA)*100)/100;
+ if(!(stakeA>0&&stakeB>0))return null;
+ const liability=lay?Math.round(stakeB*(oddsB-1)*100)/100:0;
+ const risk=Math.round((stakeA+(lay?liability:stakeB))*100)/100;
+ const commission=lay?Number(b.assumed_commission_pct??5)/100:0;
+ if(!(risk>0&&Number.isFinite(commission)&&commission>=0&&commission<1))return null;
+ const profits={};
+ for(const key of keys){
+  const backProfit=stakeA*(qsSelectionWins(a.selection,key,item.market)?oddsA-1:-1);
+  const secondProfit=lay?(qsSelectionWins(b.selection,key,'1x2_dc')?-liability:stakeB*(1-commission))
+   :stakeB*(qsSelectionWins(b.selection,key,item.market)?oddsB-1:-1);
+  profits[key]=Math.round((backProfit+secondProfit)*100)/100;
+ }
+ const minimum=Math.min(...Object.values(profits));
+ return {a:stakeA,b:stakeB,risk,liability,profits,minimum,roi:Math.round((minimum/risk)*10000)/100,lay,commission};
+}
+function qsCompactOperation(op,amount,liability){
+ const box=document.createElement('div');box.className='qs-stake-operation';
+ const name=document.createElement('strong');name.textContent=`${op?.operator||'—'} · ${qsAction(op?.action)} ${op?.selection||'—'}`;
+ const stake=document.createElement('span');stake.textContent=`${money(amount)} €  @ ${money(op?.odds)}`;
+ box.append(name,stake);
+ if(op?.action==='LAY'){
+  const risk=document.createElement('small');risk.className='qs-risk-note';risk.textContent=`Responsabilità ${money(liability)} €`;box.append(risk);
+ }
+ return box;
+}
 function qsRenderAll(){
  const rows=qsResultsFiltered();qsState.all=rows;
  const positiveOnly=(location.hash||'').replace(/^#/,'')==='found';
@@ -390,26 +438,30 @@ function qsRenderAll(){
  $('qs-all-note').textContent=available?`${rows.length.toLocaleString('it-IT')} risultati visualizzati dopo i filtri. Apri una scheda per importi, quote e profitti per esito. ${positiveOnly?'Solo combinazioni teoriche positive.':''}`:'Attendere il prossimo report completo dello scanner.';
  qsState.page=Math.min(qsState.page,Math.max(0,Math.ceil(rows.length/qsState.size)-1));
  const start=qsState.page*qsState.size,chunk=rows.slice(start,start+qsState.size),body=$('qs-all-body');body.replaceChildren();
- if(!chunk.length)empty(body,7,available?(positiveOnly?'Nessuna combinazione positiva corrisponde ai filtri':'Nessun confronto corrisponde ai filtri'):'Nessun report completo disponibile');
+ if(!chunk.length)empty(body,9,available?(positiveOnly?'Nessuna combinazione positiva corrisponde ai filtri':'Nessun confronto corrisponde ai filtri'):'Nessun report completo disponibile');
  for(const r of chunk){
   const tr=document.createElement('tr');tr.className='qs-comparison-row';
   textCell(tr,dt(r.starts_at));textCell(tr,r.event);textCell(tr,qsName(r.market));
-  const src=textCell(tr,`${r.a?.operator||'—'} / ${r.b?.operator||'—'}`);src.className='qs-fonts';
-  const td=textCell(tr,`${money(r.min_profit_eur)} €`);td.className=Number(r.min_profit_eur)>0?'profit':'qs-loss';
-  const roi=textCell(tr,`${money(r.roi_pct)}%`);if(Number(r.roi_pct)>0)roi.className='profit';
+   const sim=qsSimulatePair(r);
+   for(const [op,amount,liability] of [[r.a,sim?.a,0],[r.b,sim?.b,sim?.liability]]){
+    const cell=document.createElement('td');cell.append(qsCompactOperation(op,amount,liability));tr.append(cell);
+   }
+   const capital=textCell(tr,sim?`${money(sim.risk)} €`:'—');capital.className='qs-capital';
+   const td=textCell(tr,sim?`${money(sim.minimum)} €`:'—');td.className=sim?.minimum>0?'profit':'qs-loss';
+   const roi=textCell(tr,sim?`${money(sim.roi)}%`:'—');if(sim?.roi>0)roi.className='profit';
   const action=document.createElement('td'),btn=document.createElement('button');btn.className='outline small';btn.type='button';btn.textContent='Dettagli';btn.setAttribute('aria-expanded','false');
   action.append(btn);tr.append(action);body.append(tr);
   const details=document.createElement('tr');details.className='qs-comparison-detail';details.hidden=true;
-  const content=document.createElement('td');content.colSpan=7;
+  const content=document.createElement('td');content.colSpan=9;
   const grid=document.createElement('div');grid.className='qs-ops-grid';
   for(const [label,op] of [['Operazione 1',r.a],['Operazione 2',r.b]]){
    const card=document.createElement('div');card.className='qs-op-card';
    const heading=document.createElement('strong');heading.textContent=label;
-   const description=document.createElement('p');description.textContent=qsFormatOp(op);
+   const description=document.createElement('p');description.textContent=sim ? `${op?.operator||'—'} · ${qsAction(op?.action)} ${op?.selection||'—'} · quota ${money(op?.odds)} · importo simulato ${money(label==='Operazione 1'?sim.a:sim.b)} €${op?.action==='LAY'?` · responsabilità ${money(sim.liability)} €`:''}` : qsFormatOp(op);
    card.append(heading,description);grid.append(card);
   }
   const bottom=document.createElement('div');bottom.className='qs-detail-caption';
-  bottom.textContent=`Profitti teorici per esito: ${Object.entries(r.scenario_profits_eur||{}).map(([k,v])=>k+': '+money(v)+' €').join(' · ')}. ${r.kind==='BACK/LAY'?'Betfair ritardato; disponibilità e commissioni da verificare.':'Quote non simultanee; regolamenti da verificare.'} ${qsFresh(r.a?.operator)&&qsFresh(r.b?.operator)?'Snapshot recenti.':'Una o più fonti non recenti.'}`;
+  bottom.textContent=`Capitale teorico ${sim?money(sim.risk):'—'} € · Profitti simulati per esito: ${Object.entries(sim?.profits||{}).map(([k,v])=>k+': '+money(v)+' €').join(' · ')}. ${r.kind==='BACK/LAY'?'Betfair ritardato; disponibilità e commissioni da verificare.':'Quote non simultanee; regolamenti da verificare.'} ${qsFresh(r.a?.operator)&&qsFresh(r.b?.operator)?'Snapshot recenti.':'Una o più fonti non recenti.'}`;
   content.append(grid,bottom);details.append(content);body.append(details);
   btn.addEventListener('click',()=>{details.hidden=!details.hidden;btn.setAttribute('aria-expanded',String(!details.hidden));btn.textContent=details.hidden?'Dettagli':'Chiudi';});
  }
@@ -500,15 +552,16 @@ $('qs-archive-query').addEventListener('input',qsRenderArchive);
 function renderNewPages(){qsPopulateMarkets();qsRenderAll();qsRenderBest();qsRenderFound();qsRenderArchive();}
 function qsExportAll(){
  const rows=qsState.all;if(!rows.length)return;
- const header=['data','evento','mercato','tipo','operazione1','operazione2','profitti','profitto_minimo','redditivita'];
+ const header=['data','evento','mercato','tipo','bookmaker1','azione1','esito1','quota1','puntata1_eur','bookmaker2','azione2','esito2','quota2','puntata2_eur','responsabilita_lay_eur','capitale_totale_eur','profitti_simulati_per_esito','profitto_minimo_eur','roi_percento'];
  const safe=v=>{let s=String(v??'');if(/^[\s]*[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';};
- const content='\uFEFF'+[header,...rows.map(r=>[r.starts_at,r.event,qsName(r.market),r.kind,qsFormatOp(r.a),qsFormatOp(r.b),JSON.stringify(r.scenario_profits_eur),r.min_profit_eur,r.roi_pct])].map(row=>row.map(safe).join(';')).join('\r\n');
+ const content='\uFEFF'+[header,...rows.map(r=>{const v=qsSimulatePair(r);return [r.starts_at,r.event,qsName(r.market),r.kind,r.a?.operator,r.a?.action,r.a?.selection,r.a?.odds,v?.a,r.b?.operator,r.b?.action,r.b?.selection,r.b?.odds,v?.b,v?.lay?v.liability:'',v?.risk,JSON.stringify(v?.profits||{}),v?.minimum,v?.roi];})].map(row=>row.map(safe).join(';')).join('\r\n');
  const u=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=u;a.download='quotescope_tutti_confronti.csv';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);
 }
 for(const id of ['qs-all-query','qs-all-market','qs-all-kind','qs-all-fresh'])$(id).addEventListener(id==='qs-all-query'?'input':'change',()=>{qsState.page=0;qsRenderAll();});
 for(const th of document.querySelectorAll('[data-qs-sort]'))th.addEventListener('click',()=>{const key=th.dataset.qsSort;qsState.direction=qsState.key===key?-qsState.direction:(key==='roi_pct'||key==='min_profit_eur'?-1:1);qsState.key=key;qsState.page=0;qsRenderAll();});
 $('qs-all-prev').addEventListener('click',()=>{qsState.page=Math.max(0,qsState.page-1);qsRenderAll();});
 $('qs-all-next').addEventListener('click',()=>{qsState.page++;qsRenderAll();});
+$('qs-sim-capital').addEventListener('input',qsRenderAll);
 $('qs-all-export').addEventListener('click',qsExportAll);
 $('qs-best-event').addEventListener('input',qsRenderBest);
 $('qs-best-market').addEventListener('change',()=>{qsSelections();qsRenderBest();});

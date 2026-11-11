@@ -76,3 +76,23 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 @media(max-width:1350px){.qs-five-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.qs-source-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.qs-source-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.qs-inline-check{padding-bottom:6px}}
 @media(max-width:850px){.qs-overview-stats,.qs-legacy-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.qs-five-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.qs-system-grid{grid-template-columns:1fr}.qs-source-filters{grid-template-columns:1fr}.qs-inline-check{margin:0 0 5px}.qs-tab{padding:10px 12px}}
 @media(max-width:670px){.sidebar{position:relative}.sidebar nav{margin-top:12px}.qs-source-grid{grid-template-columns:1fr}.qs-page-subtitle{max-width:270px}.qs-overview-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.qs-five-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.metric{padding:15px}.metric strong{font-size:23px}.qs-detail-filters{grid-template-columns:1fr}.qs-tab{flex:1;text-align:center}.qs-subnav{width:100%;gap:3px}.panel-head{align-items:flex-start;flex-wrap:wrap}.qs-telegram-panel .panel-head{flex-direction:column}}
+
+/* QuoteScope UI 2.1: capitale configurabile e importi espliciti per confronto. */
+.qs-simulation-settings{display:flex;align-items:end;justify-content:space-between;gap:22px;flex-wrap:wrap;border:1px solid #315666;background:#142b3d;border-radius:10px;padding:14px 16px;margin:10px 0 18px}
+.qs-simulation-settings>div{max-width:700px}
+.qs-simulation-settings strong{font-size:13px;color:#baf9e8}
+.qs-simulation-settings p{margin:5px 0 0}
+.qs-simulation-settings label{font-size:12px;color:#bdcfdb;display:grid;gap:7px;min-width:175px}
+.qs-simulation-settings input{width:175px;background:#091b29;border:1px solid #426273;border-radius:7px;color:#f5fbff;padding:10px 13px;text-align:right;font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.qs-simulation-settings input:focus-visible{border-color:var(--accent)}
+.qs-stakes-table{min-width:1180px;white-space:normal}
+.qs-stakes-table td{vertical-align:middle;padding:12px 10px 12px 0;font-size:11px}
+.qs-stakes-table th{font-size:10px;white-space:nowrap}
+.qs-stakes-table td:nth-child(2){max-width:230px}
+.qs-stake-operation{display:grid;gap:4px;min-width:136px;line-height:1.35}
+.qs-stake-operation strong{font-size:11px;color:#ccebe1;white-space:normal}
+.qs-stake-operation span{font-size:13px;font-weight:750;color:#fff;font-variant-numeric:tabular-nums}
+.qs-risk-note{font-size:10px;color:#f2c48c}
+.qs-capital{font-weight:750;color:#d7e5ef;white-space:nowrap}
+.qs-comparison-detail td{padding:17px 14px!important}
+@media(max-width:670px){.qs-simulation-settings{align-items:stretch}.qs-simulation-settings label,.qs-simulation-settings input{width:100%}.qs-stakes-table{min-width:1110px}}
