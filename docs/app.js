@@ -71,7 +71,7 @@ const qsExpandedBooks=new Set();
 let qsDetailSnapshot=null;
 function qsSourceStatus(row){
  const stamp=Date.parse(row?.captured_at||'');
- const limit=String(row?.bookmaker||'').toUpperCase()==='BETFAIR'?180:900;
+ const limit=qsSourceLimit(String(row?.bookmaker||'').toUpperCase());
  const age=(Date.now()-stamp)/1000;
  const fresh=Number.isFinite(age)&&age>=-60&&age<=limit;
  if(!fresh)return {label:'Non recente',kind:'warn',fresh:false};
@@ -226,7 +226,7 @@ function renderUniversalComparison(){
   const chip=document.createElement('span');chip.className='cmp-source';
   const captured=info&&typeof info==='object'?info.captured_at:null;
   const sourceAge=captured?(Date.now()-Date.parse(captured))/1000:Infinity;
-  const limit=name==='BETFAIR'?180:900;
+  const limit=qsSourceLimit(name);
   const validAge=Number.isFinite(sourceAge)&&sourceAge>=-60;
   const recent=validAge&&sourceAge<limit;
   const elapsed=!validAge?'orario da verificare':sourceAge<60?`${Math.max(0,Math.round(sourceAge))} s fa`:`${Math.floor(sourceAge/60)} min fa`;
@@ -304,20 +304,33 @@ const qsAction=op=>op==='LAY'?'BANCATA':op==='BACK'?'PUNTATA':(op||'—');
 const qsName=m=>m==='dc'?'Doppia Chance':m==='1x2_dc'?'1X2 / Doppia Chance':marketLabel(m);
 const qsFormatOp=op=>{op=op||{};const risk=op.action==='LAY'?` · responsabilità ${money(op.liability_eur)} €`:'';return `${op.operator||'—'} · ${qsAction(op.action)} ${op.selection||'—'} · quota ${money(op.odds)} · importo ${money(op.stake_eur)} €${risk}`;};
 const qsCandidates=()=>Array.isArray(comparisonReport?.two_leg_all_comparisons)?comparisonReport.two_leg_all_comparisons:[];
-const qsFresh=(operator)=>{const x=(comparisonReport?.source_status||{})[operator];if(!x||typeof x!=='object')return false;const age=(Date.now()-Date.parse(x.captured_at))/1000;return Number.isFinite(age)&&age>=-60&&age< (operator==='BETFAIR'?180:900);};
-
-const qsSources=['SNAI','888sport','GOLDBET','BETFAIR'];
+const qsFresh=operator=>qsSourceHealth(operator).recent;
+const qsDefaultSources=['SNAI','888sport','GOLDBET','BETFAIR','FASTBET'];
+const qsSourceLimit=name=>name==='BETFAIR'?180:name==='FASTBET'?420:900;
+function qsSources(){
+ const reported=Object.keys(comparisonReport?.source_status||{});
+ return [...new Set([...qsDefaultSources,...reported])];
+}
+function qsComparisonSources(){
+ const select=$('qs-all-book'),prior=select.value||'all';
+ const operators=[...new Set([...qsSources(),...qsCandidates().flatMap(r=>[r.a?.operator,r.b?.operator]).filter(Boolean)])];
+ const options=[['all','Tutti gli operatori'],...operators.map(name=>[name,name])];
+ select.replaceChildren(...options.map(([value,label])=>{
+  const opt=document.createElement('option');opt.value=value;opt.textContent=label;return opt;
+ }));
+ select.value=operators.includes(prior)?prior:'all';
+}
 function qsSourceHealth(name){
  const x=comparisonReport?.source_status?.[name];
  const stamp=x&&typeof x==='object'?x.captured_at:null;
  const age=(Date.now()-Date.parse(stamp||''))/1000;
- const limit=name==='BETFAIR'?180:900;
+ const limit=qsSourceLimit(name);
  const recent=!!stamp&&Number.isFinite(age)&&age>=-60&&age<=limit;
  return {recent,stamp,reason:recent?'Dati recenti':(typeof x==='string'?x.replaceAll('_',' '):'Dati non recenti o assenti'),delayed:name==='BETFAIR'};
 }
 function qsSourceTiles(target){
  target.replaceChildren();
- for(const name of qsSources){
+ for(const name of qsSources()){
   const x=qsSourceHealth(name),card=document.createElement('div');card.className='qs-source-tile '+(x.recent?'qs-tile-ok':'qs-tile-warn');
   const title=document.createElement('strong');title.textContent=name;
   const chip=document.createElement('span');chip.className='qs-status-tag qs-status-'+(x.recent?'ok':'warn');chip.textContent=x.recent?'Recente':'Da verificare';
@@ -328,9 +341,10 @@ function qsSourceTiles(target){
 }
 function qsRenderOverview(){
  qsSourceTiles($('ov-source-chips'));
- const count=qsSources.filter(name=>qsSourceHealth(name).recent).length;
- $('ov-fresh-books').textContent=`${count} / ${qsSources.length}`;
- $('ov-fresh-desc').textContent='Soglia 15 min; Betfair 3 min';
+ const sources=qsSources(),count=sources.filter(qsFresh).length;
+ $('ov-fresh-books').textContent=`${count} / ${sources.length}`;
+ $('ov-sidebar-sources').textContent=sources.map(name=>name.toLocaleUpperCase('it-IT')).join(' · ');
+ $('ov-fresh-desc').textContent='Soglia 15 min · FASTBET 7 min · Betfair 3 min';
  $('ov-events').textContent=marketSources.reduce((total,x)=>total+(Number(x.events_count)||0),0).toLocaleString('it-IT');
  $('ov-markets').textContent=Number(comparisonReport?.markets_compared||0).toLocaleString('it-IT');
  $('ov-positive').textContent=Number(comparisonReport?.two_leg_positive_count||0).toLocaleString('it-IT');
@@ -364,13 +378,14 @@ function qsPopulateMarkets(){
  }
 }
 function qsResultsFiltered(){
- const q=qsNorm($('qs-all-query').value),market=$('qs-all-market').value,kind=$('qs-all-kind').value;
+ const q=qsNorm($('qs-all-query').value),market=$('qs-all-market').value,kind=$('qs-all-kind').value,book=$('qs-all-book').value;
  const positiveOnly=(location.hash||'').replace(/^#/,'')==='found',recentOnly=$('qs-all-fresh').checked;
  return qsCandidates().filter(r=>{
   if(positiveOnly&&!(Number(r.min_profit_eur)>0))return false;
   if(recentOnly&&!(qsFresh(r.a?.operator)&&qsFresh(r.b?.operator)))return false;
   if(market!=='all'&&r.market!==market)return false;
   if(kind!=='all'&&r.kind!==kind)return false;
+  if(book&&book!=='all'&&book!==r.a?.operator&&book!==r.b?.operator)return false;
   if(!q)return true;
   const data=qsNorm(`${r.event||''} ${r.a?.operator||''} ${r.b?.operator||''} ${r.a?.selection||''} ${r.b?.selection||''}`);
   return q.split(' ').every(token=>data.includes(token));
@@ -435,7 +450,8 @@ function qsRenderAll(){
  $('qs-all-total').textContent=Number(comparisonReport?.two_leg_pairs_evaluated||0).toLocaleString('it-IT');
  $('qs-all-positive').textContent=Number(comparisonReport?.two_leg_positive_count||0).toLocaleString('it-IT');
  const available=Array.isArray(comparisonReport?.two_leg_all_comparisons);
- $('qs-all-note').textContent=available?`${rows.length.toLocaleString('it-IT')} risultati visualizzati dopo i filtri. Apri una scheda per importi, quote e profitti per esito. ${positiveOnly?'Solo combinazioni teoriche positive.':''}`:'Attendere il prossimo report completo dello scanner.';
+ const operator=$('qs-all-book').value;
+ $('qs-all-note').textContent=available&&operator&&operator!=='all'&&!rows.length?`Nessun confronto per ${operator} con questi filtri. Controlla le altre selezioni e i mercati abbinati nel report.`:available?`${rows.length.toLocaleString('it-IT')} risultati visualizzati dopo i filtri. Apri una scheda per importi, quote e profitti per esito. ${positiveOnly?'Solo combinazioni teoriche positive.':''}`:'Attendere il prossimo report completo dello scanner.';
  qsState.page=Math.min(qsState.page,Math.max(0,Math.ceil(rows.length/qsState.size)-1));
  const start=qsState.page*qsState.size,chunk=rows.slice(start,start+qsState.size),body=$('qs-all-body');body.replaceChildren();
  if(!chunk.length)empty(body,9,available?(positiveOnly?'Nessuna combinazione positiva corrisponde ai filtri':'Nessun confronto corrisponde ai filtri'):'Nessun report completo disponibile');
@@ -549,7 +565,7 @@ function qsRenderArchive(){
 }
 $('qs-archive-query').addEventListener('input',qsRenderArchive);
 
-function renderNewPages(){qsPopulateMarkets();qsRenderAll();qsRenderBest();qsRenderFound();qsRenderArchive();}
+function renderNewPages(){qsPopulateMarkets();qsComparisonSources();qsRenderAll();qsRenderBest();qsRenderFound();qsRenderArchive();}
 function qsExportAll(){
  const rows=qsState.all;if(!rows.length)return;
  const header=['data','evento','mercato','tipo','bookmaker1','azione1','esito1','quota1','puntata1_eur','bookmaker2','azione2','esito2','quota2','puntata2_eur','responsabilita_lay_eur','capitale_totale_eur','profitti_simulati_per_esito','profitto_minimo_eur','roi_percento'];
@@ -557,7 +573,7 @@ function qsExportAll(){
  const content='\uFEFF'+[header,...rows.map(r=>{const v=qsSimulatePair(r);return [r.starts_at,r.event,qsName(r.market),r.kind,r.a?.operator,r.a?.action,r.a?.selection,r.a?.odds,v?.a,r.b?.operator,r.b?.action,r.b?.selection,r.b?.odds,v?.b,v?.lay?v.liability:'',v?.risk,JSON.stringify(v?.profits||{}),v?.minimum,v?.roi];})].map(row=>row.map(safe).join(';')).join('\r\n');
  const u=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=u;a.download='quotescope_tutti_confronti.csv';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);
 }
-for(const id of ['qs-all-query','qs-all-market','qs-all-kind','qs-all-fresh'])$(id).addEventListener(id==='qs-all-query'?'input':'change',()=>{qsState.page=0;qsRenderAll();});
+for(const id of ['qs-all-query','qs-all-book','qs-all-market','qs-all-kind','qs-all-fresh'])$(id).addEventListener(id==='qs-all-query'?'input':'change',()=>{qsState.page=0;qsRenderAll();});
 for(const th of document.querySelectorAll('[data-qs-sort]'))th.addEventListener('click',()=>{const key=th.dataset.qsSort;qsState.direction=qsState.key===key?-qsState.direction:(key==='roi_pct'||key==='min_profit_eur'?-1:1);qsState.key=key;qsState.page=0;qsRenderAll();});
 $('qs-all-prev').addEventListener('click',()=>{qsState.page=Math.max(0,qsState.page-1);qsRenderAll();});
 $('qs-all-next').addEventListener('click',()=>{qsState.page++;qsRenderAll();});
